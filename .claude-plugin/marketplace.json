@@ -1,0 +1,15 @@
+{
+  "name": "karthrand-ai-public",
+  "version": "1.0.0",
+  "description": "Karthrand 的 AI 工具库, 包含Skills、Agents、通用rules 等资源",
+  "author": {
+    "name": "karthrand"
+  },
+  "repository": "https://github.com/karthrand/karthrand-ai-public.git",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "ai-tools",
+    "skills"
+  ]
+}
