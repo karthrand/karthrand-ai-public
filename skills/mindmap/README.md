@@ -13,7 +13,15 @@
 
 ⚠️ **使用本 Skill 前必须具备 `markmap-mcp-server` MCP**
 
-本 Skill 已内置 bootstrap 脚本。首次调用时会先检测当前环境中的 `claude` / `codex`，然后自动完成 `markmap-mcp-server` 的安装或修复。
+本 Skill 已内置 bootstrap 脚本，但不再每次会话都执行。它只使用一个**全局初始化标志文件**判断是否已完成初始化：
+
+- Windows：`%APPDATA%\karthrand-ai\skills\mindmap\.initialized`
+- macOS/Linux：`${XDG_STATE_HOME:-$HOME/.local/state}/karthrand-ai/skills/mindmap/.initialized`
+
+触发 bootstrap 的时机只有两种：
+
+1. 第一次使用，检测不到全局初始化标志文件
+2. 调用 `markmap-mcp-server` 时出现环境类错误，需要强制修复
 
 自动安装策略：
 
@@ -58,7 +66,7 @@ codex mcp add markmap-mcp-server -- cmd /c markmap-mcp-server
 
 ### bootstrap 手动执行
 
-如果您想先独立完成预检查，可直接执行：
+如果您想先独立完成首次初始化，可直接执行：
 
 #### Windows
 
@@ -71,6 +79,8 @@ powershell -ExecutionPolicy Bypass -File .\skills\mindmap\scripts\bootstrap.ps1 
 ```bash
 bash ./skills/mindmap/scripts/bootstrap.sh --project-root "$PWD" --skill-root "$PWD/skills/mindmap"
 ```
+
+初始化成功后会自动写入全局初始化标志文件，后续会话不会再次执行 bootstrap。
 
 ### 验证 MCP 安装
 
@@ -104,7 +114,7 @@ codex mcp list
 2. 再执行 `claude mcp add --transport stdio --scope user markmap-mcp-server -- cmd /c markmap-mcp-server`
 3. 若 `claude mcp add` 仍失败，再编辑当前用户的 `~/.claude.json`
 
-### 强制重装
+### 强制修复
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\skills\mindmap\scripts\bootstrap.ps1 -ProjectRoot "$PWD" -SkillRoot "$PWD\skills\mindmap" -Force
@@ -113,6 +123,8 @@ powershell -ExecutionPolicy Bypass -File .\skills\mindmap\scripts\bootstrap.ps1 
 ```bash
 bash ./skills/mindmap/scripts/bootstrap.sh --project-root "$PWD" --skill-root "$PWD/skills/mindmap" --force
 ```
+
+仅当 `markmap-mcp-server` 出现环境类错误时才需要强制修复。
 
 ## 安装 Skill
 

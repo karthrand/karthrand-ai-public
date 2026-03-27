@@ -3,7 +3,7 @@ set -eu
 
 SERVER_NAME="markmap-mcp-server"
 PACKAGE_NAME="@jinzcdev/markmap-mcp-server"
-BOOTSTRAP_VERSION="2026-03-27-v1"
+BOOTSTRAP_VERSION="2026-03-27-v2"
 
 PROJECT_ROOT="$(pwd)"
 SKILL_ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
@@ -19,8 +19,29 @@ has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-state_file() {
-  printf '%s/.agents/state/mindmap.json' "$PROJECT_ROOT"
+initialization_file() {
+  state_home="${XDG_STATE_HOME:-}"
+  if [ -z "$state_home" ]; then
+    state_home="${HOME}/.local/state"
+  fi
+
+  printf '%s/karthrand-ai/skills/mindmap/.initialized' "$state_home"
+}
+
+is_initialized() {
+  [ "$FORCE" = "false" ] || return 1
+  [ -f "$(initialization_file)" ]
+}
+
+write_initialization_flag() {
+  file="$(initialization_file)"
+  mkdir -p "$(dirname "$file")"
+  printf 'initialized\n' > "$file"
+}
+
+remove_initialization_flag() {
+  file="$(initialization_file)"
+  [ -f "$file" ] && rm -f "$file" || true
 }
 
 while [ "$#" -gt 0 ]; do
@@ -84,31 +105,6 @@ codex"
   esac
 
   printf '%s\n' "$hosts"
-}
-
-state_matches() {
-  [ "$FORCE" = "false" ] || return 1
-  file="$(state_file)"
-  [ -f "$file" ] || return 1
-  has_cmd node || return 1
-
-  node -e '
-const fs = require("fs");
-const file = process.argv[1];
-const root = process.argv[2];
-const hosts = process.argv.slice(3);
-try {
-  const state = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (state.project_root !== root) process.exit(1);
-  const installed = new Set(state.installed_hosts || []);
-  for (const host of hosts) {
-    if (!installed.has(host)) process.exit(1);
-  }
-  process.exit(0);
-} catch {
-  process.exit(1);
-}
-' "$file" "$PROJECT_ROOT" "$@"
 }
 
 assert_node_toolchain() {
@@ -240,116 +236,67 @@ write_manual_config() {
 install_host() {
   host_name="$1"
   if [ "$FORCE" = "true" ]; then
+    log "检测到 --force，先移除 ${host_name} 的旧配置。"
     remove_host_server "$host_name"
   fi
 
   if native_add_npx "$host_name"; then
-    printf '%s\n' "native-inline-npx"
     return 0
   fi
 
   if has_cmd "$SERVER_NAME" && native_add_global "$host_name"; then
-    printf '%s\n' "native-global-bin"
     return 0
   fi
 
   log "${host_name} 原生命令注册失败，改为写入当前用户配置文件。"
   write_manual_config "$host_name"
-  printf '%s\n' "manual-config"
 }
 
-save_state() {
-  file="$(state_file)"
-  mkdir -p "$(dirname "$file")"
-
-  node -e '
-const fs = require("fs");
-const file = process.argv[1];
-const root = process.argv[2];
-const version = process.argv[3];
-const hosts = process.argv[4].split(",").filter(Boolean);
-const modes = process.argv[5].split(",").filter(Boolean);
-const payload = {
-  skill_name: "mindmap",
-  skill_version: version,
-  project_root: root,
-  initialized_at: new Date().toISOString(),
-  detected_hosts: hosts,
-  installed_hosts: hosts,
-  install_mode: [...new Set(modes)],
-  platform: "unix",
-  bootstrap_hash: version
-};
-fs.writeFileSync(file, JSON.stringify(payload, null, 2));
-' "$file" "$PROJECT_ROOT" "$BOOTSTRAP_VERSION" "$HOSTS_CSV" "$MODES_CSV"
-}
-
-HOSTS_RAW="$(get_hosts)"
-assert_node_toolchain
-
-HOSTS_ARGS=""
-for target_name in $HOSTS_RAW; do
-  HOSTS_ARGS="${HOSTS_ARGS} ${target_name}"
-done
-
-# shellcheck disable=SC2086
-if state_matches $HOSTS_ARGS; then
-  for target_name in $HOSTS_RAW; do
-    host_installed "$target_name" || { log "检测到状态文件，但 ${target_name} 的 MCP 不可用。"; exit 1; }
+assert_ready() {
+  for target_name in "$@"; do
+    host_installed "$target_name" || { log "${target_name} 的 MCP 安装后仍不可用。"; exit 1; }
   done
+}
+
+FLAG_FILE="$(initialization_file)"
+log "开始执行 mindmap bootstrap。"
+log "ProjectRoot=${PROJECT_ROOT}"
+log "SkillRoot=${SKILL_ROOT}"
+log "InitializationFlag=${FLAG_FILE}"
+log "BootstrapVersion=${BOOTSTRAP_VERSION}"
+
+if [ "$CHECK_ONLY" = "true" ]; then
+  if [ -f "$FLAG_FILE" ]; then
+    log "已检测到初始化标志文件。"
+    exit 0
+  fi
+
+  log "未检测到初始化标志文件。"
+  exit 1
+fi
+
+if is_initialized; then
   log "已初始化，跳过。"
   exit 0
 fi
 
-if [ "$CHECK_ONLY" = "true" ]; then
-  missing=""
-  for target_name in $HOSTS_RAW; do
-    if ! host_installed "$target_name"; then
-      if [ -n "$missing" ]; then
-        missing="${missing}, ${target_name}"
-      else
-        missing="${target_name}"
-      fi
-    fi
-  done
+assert_node_toolchain
+HOSTS_RAW="$(get_hosts)"
 
-  if [ -n "$missing" ]; then
-    log "以下宿主尚未安装：$missing"
-    exit 1
-  fi
-
-  log "所有目标宿主已完成 MCP 安装。"
-  exit 0
+if [ "$FORCE" = "true" ]; then
+  remove_initialization_flag
 fi
 
-MODES_LIST=""
-HOSTS_CSV=""
 for target_name in $HOSTS_RAW; do
-  if [ -z "$HOSTS_CSV" ]; then
-    HOSTS_CSV="$target_name"
-  else
-    HOSTS_CSV="${HOSTS_CSV},${target_name}"
-  fi
-
   if [ "$FORCE" = "false" ] && host_installed "$target_name"; then
     log "${target_name} 已安装 ${SERVER_NAME}，跳过注册。"
-    mode="existing"
-  else
-    log "开始为 ${target_name} 安装/修复 ${SERVER_NAME}。"
-    mode="$(install_host "$target_name")"
+    continue
   fi
 
-  if [ -z "$MODES_LIST" ]; then
-    MODES_LIST="$mode"
-  else
-    MODES_LIST="${MODES_LIST},${mode}"
-  fi
+  log "开始为 ${target_name} 安装/修复 ${SERVER_NAME}。"
+  install_host "$target_name"
 done
 
-for target_name in $HOSTS_RAW; do
-  host_installed "$target_name" || { log "${target_name} 的 MCP 安装后仍不可用。"; exit 1; }
-done
-
-MODES_CSV="$MODES_LIST"
-save_state
+assert_ready $HOSTS_RAW
+write_initialization_flag
 log "bootstrap 完成。"

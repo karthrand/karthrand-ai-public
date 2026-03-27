@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $ServerName = "markmap-mcp-server"
 $PackageName = "@jinzcdev/markmap-mcp-server"
-$BootstrapVersion = "2026-03-27-v1"
+$BootstrapVersion = "2026-03-27-v2"
 $IsWindowsPlatform = $env:OS -eq "Windows_NT"
 
 function Write-Info {
@@ -60,9 +60,44 @@ function Invoke-External {
     }
 }
 
-function Get-StateFilePath {
-    $stateDir = Join-Path $ProjectRoot ".agents\state"
-    return Join-Path $stateDir "mindmap.json"
+function Get-InitializationFilePath {
+    if ($IsWindowsPlatform) {
+        $baseDir = $env:APPDATA
+        if ([string]::IsNullOrWhiteSpace($baseDir)) {
+            $baseDir = Join-Path $HOME "AppData\Roaming"
+        }
+
+        return Join-Path $baseDir "karthrand-ai\skills\mindmap\.initialized"
+    }
+
+    $stateHome = $env:XDG_STATE_HOME
+    if ([string]::IsNullOrWhiteSpace($stateHome)) {
+        $stateHome = Join-Path $HOME ".local/state"
+    }
+
+    return Join-Path $stateHome "karthrand-ai/skills/mindmap/.initialized"
+}
+
+function Test-Initialized {
+    if ($Force) {
+        return $false
+    }
+
+    return Test-Path (Get-InitializationFilePath)
+}
+
+function Write-InitializationFlag {
+    $flagFile = Get-InitializationFilePath
+    $flagDir = Split-Path -Parent $flagFile
+    New-Item -ItemType Directory -Path $flagDir -Force | Out-Null
+    Set-Content -Path $flagFile -Value "initialized" -Encoding UTF8
+}
+
+function Remove-InitializationFlag {
+    $flagFile = Get-InitializationFilePath
+    if (Test-Path $flagFile) {
+        Remove-Item -LiteralPath $flagFile -Force
+    }
 }
 
 function Get-TargetHosts {
@@ -109,38 +144,6 @@ function Get-TargetHosts {
 
             return $hosts
         }
-    }
-}
-
-function Test-StateMatches {
-    param([string[]]$Hosts)
-
-    if ($Force) {
-        return $false
-    }
-
-    $stateFile = Get-StateFilePath
-    if (-not (Test-Path $stateFile)) {
-        return $false
-    }
-
-    try {
-        $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-        $installedHosts = @($state.installed_hosts)
-        if ($state.project_root -ne $ProjectRoot) {
-            return $false
-        }
-
-        foreach ($targetName in $Hosts) {
-            if ($installedHosts -notcontains $targetName) {
-                return $false
-            }
-        }
-
-        return $true
-    }
-    catch {
-        return $false
     }
 }
 
@@ -192,7 +195,6 @@ function Ensure-GlobalBinary {
     }
 
     Write-Info "Windows 环境先尝试全局安装 $PackageName。"
-    # 避免在严格模式下走 npm.ps1，优先使用 npm.cmd。
     if (Test-CommandExists "npm.cmd") {
         [void](Invoke-External -Command "npm.cmd" -Arguments @("install", "-g", $PackageName))
     }
@@ -386,31 +388,6 @@ function Install-Host {
     return "manual-config"
 }
 
-function Save-State {
-    param(
-        [string[]]$Hosts,
-        [string[]]$Modes
-    )
-
-    $stateFile = Get-StateFilePath
-    $stateDir = Split-Path -Parent $stateFile
-    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-
-    $payload = [ordered]@{
-        skill_name = "mindmap"
-        skill_version = $BootstrapVersion
-        project_root = $ProjectRoot
-        initialized_at = [DateTimeOffset]::UtcNow.ToString("o")
-        detected_hosts = $Hosts
-        installed_hosts = $Hosts
-        install_mode = ($Modes | Select-Object -Unique)
-        platform = $(if ($IsWindowsPlatform) { "windows" } else { "unix" })
-        bootstrap_hash = $BootstrapVersion
-    }
-
-    $payload | ConvertTo-Json -Depth 10 | Set-Content -Path $stateFile -Encoding UTF8
-}
-
 function Assert-Ready {
     param([string[]]$Hosts)
 
@@ -426,49 +403,44 @@ function Assert-Ready {
     }
 }
 
+$flagFile = Get-InitializationFilePath
 Write-Info "开始执行 mindmap bootstrap。"
 Write-Info "ProjectRoot=$ProjectRoot"
 Write-Info "SkillRoot=$SkillRoot"
+Write-Info "InitializationFlag=$flagFile"
 
-Test-NodeToolchain
-$hosts = Get-TargetHosts
+if ($CheckOnly) {
+    if (Test-Path $flagFile) {
+        Write-Info "已检测到初始化标志文件。"
+        exit 0
+    }
 
-if (Test-StateMatches -Hosts $hosts) {
-    Write-Info "检测到现有初始化状态，开始做快速校验。"
-    Assert-Ready -Hosts $hosts
+    Write-Info "未检测到初始化标志文件。"
+    exit 1
+}
+
+if (Test-Initialized) {
     Write-Info "已初始化，跳过。"
     exit 0
 }
 
-if ($CheckOnly) {
-    $notReady = @()
-    foreach ($targetName in $hosts) {
-        if (-not (Test-HostInstalled -HostName $targetName)) {
-            $notReady += $targetName
-        }
-    }
+Test-NodeToolchain
+$hosts = Get-TargetHosts
 
-    if ($notReady.Count -gt 0) {
-        Write-Info "以下宿主尚未安装：$($notReady -join ', ')"
-        exit 1
-    }
-
-    Write-Info "所有目标宿主已完成 MCP 安装。"
-    exit 0
+if ($Force) {
+    Remove-InitializationFlag
 }
 
-$modes = @()
 foreach ($targetName in $hosts) {
     if ((Test-HostInstalled -HostName $targetName) -and -not $Force) {
         Write-Info "$targetName 已安装 $ServerName，跳过注册。"
-        $modes += "existing"
         continue
     }
 
     Write-Info "开始为 $targetName 安装/修复 $ServerName。"
-    $modes += Install-Host -HostName $targetName
+    [void](Install-Host -HostName $targetName)
 }
 
 Assert-Ready -Hosts $hosts
-Save-State -Hosts $hosts -Modes $modes
+Write-InitializationFlag
 Write-Info "bootstrap 完成。"

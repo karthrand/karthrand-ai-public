@@ -1,7 +1,7 @@
 interface:
   display_name: "Mindmap"
-  short_description: "把自然语言整理成 markmap 思维导图并自动完成 MCP 预检查"
-  default_prompt: "使用 $mindmap 前，先运行当前平台对应的 bootstrap 脚本；只有在脚本确认 markmap-mcp-server 已就绪后，才继续生成思维导图。"
+  short_description: "当用户需要把内容生成思维导图、流程图或结构图时触发"
+  default_prompt: "优先检查全局初始化标志文件；仅当标志文件不存在，或 markmap-mcp-server 调用出现环境类错误时，才参考 references/bootstrap.md 执行 bootstrap。bootstrap 修复后只重试一次。"
 policy:
   allow_implicit_invocation: false
 dependencies:
