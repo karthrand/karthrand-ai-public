@@ -192,7 +192,17 @@ function Ensure-GlobalBinary {
     }
 
     Write-Info "Windows 环境先尝试全局安装 $PackageName。"
-    [void](Invoke-External -Command "npm" -Arguments @("install", "-g", $PackageName))
+    # 避免在严格模式下走 npm.ps1，优先使用 npm.cmd。
+    if (Test-CommandExists "npm.cmd") {
+        [void](Invoke-External -Command "npm.cmd" -Arguments @("install", "-g", $PackageName))
+    }
+    elseif (Test-CommandExists "cmd") {
+        [void](Invoke-External -Command "cmd" -Arguments @("/c", "npm", "install", "-g", $PackageName))
+    }
+    else {
+        [void](Invoke-External -Command "npm" -Arguments @("install", "-g", $PackageName))
+    }
+
     return Test-CommandExists $ServerName
 }
 
