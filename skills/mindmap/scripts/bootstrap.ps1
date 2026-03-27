@@ -1,8 +1,7 @@
 param(
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$SkillRoot = (Split-Path -Parent $PSScriptRoot),
-    [ValidateSet("auto", "claude", "codex", "all")]
-    [string]$Targets = "auto",
+    [string]$Targets = "",
     [switch]$CheckOnly,
     [switch]$Force
 )
@@ -12,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $ServerName = "markmap-mcp-server"
 $PackageName = "@jinzcdev/markmap-mcp-server"
-$BootstrapVersion = "2026-03-27-v2"
+$BootstrapVersion = "2026-03-28-v1"
 $IsWindowsPlatform = $env:OS -eq "Windows_NT"
 
 function Write-Info {
@@ -60,14 +59,14 @@ function Invoke-External {
     }
 }
 
-function Get-InitializationFilePath {
+function Get-StateDirectory {
     if ($IsWindowsPlatform) {
         $baseDir = $env:APPDATA
         if ([string]::IsNullOrWhiteSpace($baseDir)) {
             $baseDir = Join-Path $HOME "AppData\Roaming"
         }
 
-        return Join-Path $baseDir "karthrand-ai\skills\mindmap\.initialized"
+        return Join-Path $baseDir "karthrand-ai\skills\mindmap"
     }
 
     $stateHome = $env:XDG_STATE_HOME
@@ -75,33 +74,92 @@ function Get-InitializationFilePath {
         $stateHome = Join-Path $HOME ".local/state"
     }
 
-    return Join-Path $stateHome "karthrand-ai/skills/mindmap/.initialized"
+    return Join-Path $stateHome "karthrand-ai/skills/mindmap"
 }
 
-function Test-Initialized {
+function Get-ServiceFlagPath {
+    return Join-Path (Get-StateDirectory) "service.initialized"
+}
+
+function Get-HostFlagPath {
+    param([string]$HostName)
+    return Join-Path (Get-StateDirectory) "host.$HostName.initialized"
+}
+
+function Test-ServiceInitialized {
     if ($Force) {
         return $false
     }
 
-    return Test-Path (Get-InitializationFilePath)
+    return Test-Path (Get-ServiceFlagPath)
 }
 
-function Write-InitializationFlag {
-    $flagFile = Get-InitializationFilePath
-    $flagDir = Split-Path -Parent $flagFile
-    New-Item -ItemType Directory -Path $flagDir -Force | Out-Null
-    Set-Content -Path $flagFile -Value "initialized" -Encoding UTF8
+function Test-HostInitialized {
+    param([string]$HostName)
+
+    if ($Force) {
+        return $false
+    }
+
+    return Test-Path (Get-HostFlagPath -HostName $HostName)
 }
 
-function Remove-InitializationFlag {
-    $flagFile = Get-InitializationFilePath
-    if (Test-Path $flagFile) {
-        Remove-Item -LiteralPath $flagFile -Force
+function Write-Flag {
+    param([string]$Path)
+
+    $dir = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Set-Content -Path $Path -Value "initialized" -Encoding UTF8
+}
+
+function Remove-Flag {
+    param([string]$Path)
+
+    if (Test-Path $Path) {
+        Remove-Item -LiteralPath $Path -Force
     }
 }
 
+function Remove-ServiceFlag {
+    Remove-Flag -Path (Get-ServiceFlagPath)
+}
+
+function Write-ServiceFlag {
+    Write-Flag -Path (Get-ServiceFlagPath)
+}
+
+function Remove-HostFlag {
+    param([string]$HostName)
+    Remove-Flag -Path (Get-HostFlagPath -HostName $HostName)
+}
+
+function Write-HostFlag {
+    param([string]$HostName)
+    Write-Flag -Path (Get-HostFlagPath -HostName $HostName)
+}
+
 function Get-TargetHosts {
+    $knownHosts = @("claude", "codex", "opencode")
+
+    if ([string]::IsNullOrWhiteSpace($Targets)) {
+        throw "必须显式指定 Targets，可选值：claude、codex、opencode、all。"
+    }
+
     switch ($Targets) {
+        "all" {
+            $hosts = @()
+            foreach ($name in $knownHosts) {
+                if (Test-CommandExists $name) {
+                    $hosts += $name
+                }
+            }
+
+            if ($hosts.Count -eq 0) {
+                throw "未检测到 claude、codex 或 opencode 命令。"
+            }
+
+            return $hosts
+        }
         "claude" {
             if (-not (Test-CommandExists "claude")) {
                 throw "未检测到 claude 命令。"
@@ -116,33 +174,15 @@ function Get-TargetHosts {
 
             return @("codex")
         }
-        "all" {
-            $hosts = @()
-            foreach ($name in @("claude", "codex")) {
-                if (Test-CommandExists $name) {
-                    $hosts += $name
-                }
+        "opencode" {
+            if (-not (Test-CommandExists "opencode")) {
+                throw "未检测到 opencode 命令。"
             }
 
-            if ($hosts.Count -eq 0) {
-                throw "未检测到 claude 或 codex 命令。"
-            }
-
-            return $hosts
+            return @("opencode")
         }
         default {
-            $hosts = @()
-            foreach ($name in @("claude", "codex")) {
-                if (Test-CommandExists $name) {
-                    $hosts += $name
-                }
-            }
-
-            if ($hosts.Count -eq 0) {
-                throw "自动检测失败：未检测到 claude 或 codex 命令。"
-            }
-
-            return $hosts
+            throw "非法 Targets：$Targets。可选值：claude、codex、opencode、all。"
         }
     }
 }
@@ -156,101 +196,163 @@ function Test-NodeToolchain {
         throw "缺少 npm。请先安装 npm。"
     }
 
-    if (-not $IsWindowsPlatform -and -not (Test-CommandExists "npx")) {
-        throw "类 Unix 环境缺少 npx，无法按约定使用 npx -y 安装 MCP。"
+    if (-not (Test-CommandExists "npx")) {
+        throw "缺少 npx。请先安装 npx。"
+    }
+}
+
+function Ensure-SharedService {
+    Test-NodeToolchain
+
+    if ($IsWindowsPlatform) {
+        if (Test-CommandExists $ServerName) {
+            Write-Info "检测到全局 $ServerName 命令，跳过共享安装。"
+            return
+        }
+
+        Write-Info "开始安装共享服务 $PackageName。"
+        if (Test-CommandExists "npm.cmd") {
+            [void](Invoke-External -Command "npm.cmd" -Arguments @("install", "-g", $PackageName))
+        }
+        elseif (Test-CommandExists "cmd") {
+            [void](Invoke-External -Command "cmd" -Arguments @("/c", "npm", "install", "-g", $PackageName))
+        }
+        else {
+            [void](Invoke-External -Command "npm" -Arguments @("install", "-g", $PackageName))
+        }
+
+        if (-not (Test-CommandExists $ServerName)) {
+            throw "共享服务安装后仍未找到 $ServerName 命令。"
+        }
+
+        return
+    }
+
+    Write-Info "类 Unix 环境使用 npx 启动共享服务，无需额外全局安装。"
+}
+
+function Test-SharedServiceReady {
+    Test-NodeToolchain
+
+    $server = Get-ServerCommandSpec
+    $arguments = @($server.Arguments) + @("--help")
+    $result = Invoke-External -Command $server.Command -Arguments $arguments -AllowFailure
+    return $result.Success
+}
+
+function Get-ServerCommandSpec {
+    if ($IsWindowsPlatform) {
+        if (Test-CommandExists $ServerName) {
+            return @{
+                Command = "cmd"
+                Arguments = @("/c", $ServerName)
+            }
+        }
+
+        return @{
+            Command = "cmd"
+            Arguments = @("/c", "npx", "-y", $PackageName)
+        }
+    }
+
+    if (Test-CommandExists $ServerName) {
+        return @{
+            Command = $ServerName
+            Arguments = @()
+        }
+    }
+
+    return @{
+        Command = "npx"
+        Arguments = @("-y", $PackageName)
     }
 }
 
 function Test-HostInstalled {
     param([string]$HostName)
 
-    if ($HostName -eq "claude") {
-        $result = Invoke-External -Command "claude" -Arguments @("mcp", "get", $ServerName) -AllowFailure
-        return $result.Success
-    }
+    switch ($HostName) {
+        "claude" {
+            $result = Invoke-External -Command "claude" -Arguments @("mcp", "get", $ServerName) -AllowFailure
+            return $result.Success
+        }
+        "codex" {
+            $result = Invoke-External -Command "codex" -Arguments @("mcp", "list") -AllowFailure
+            if (-not $result.Success) {
+                return $false
+            }
 
-    $result = Invoke-External -Command "codex" -Arguments @("mcp", "list") -AllowFailure
-    if (-not $result.Success) {
-        return $false
-    }
+            $joined = @($result.Output) -join [Environment]::NewLine
+            return $joined -match "(?m)^$([regex]::Escape($ServerName))(\s|$)"
+        }
+        "opencode" {
+            $result = Invoke-External -Command "opencode" -Arguments @("mcp", "list") -AllowFailure
+            if (-not $result.Success) {
+                return $false
+            }
 
-    $joined = @($result.Output) -join [Environment]::NewLine
-    return $joined -match "(?m)^$([regex]::Escape($ServerName))(\s|$)"
+            $joined = @($result.Output) -join [Environment]::NewLine
+            return $joined -match [regex]::Escape($ServerName)
+        }
+        default {
+            throw "未知宿主：$HostName"
+        }
+    }
 }
 
 function Remove-HostServer {
     param([string]$HostName)
 
-    if ($HostName -eq "claude") {
-        [void](Invoke-External -Command "claude" -Arguments @("mcp", "remove", "--scope", "user", $ServerName) -AllowFailure)
-        return
+    switch ($HostName) {
+        "claude" {
+            [void](Invoke-External -Command "claude" -Arguments @("mcp", "remove", "--scope", "user", $ServerName) -AllowFailure)
+            return
+        }
+        "codex" {
+            [void](Invoke-External -Command "codex" -Arguments @("mcp", "remove", $ServerName) -AllowFailure)
+            return
+        }
+        "opencode" {
+            Remove-OpenCodeConfigValue
+            return
+        }
+        default {
+            throw "未知宿主：$HostName"
+        }
     }
-
-    [void](Invoke-External -Command "codex" -Arguments @("mcp", "remove", $ServerName) -AllowFailure)
 }
 
-function Ensure-GlobalBinary {
-    if (Test-CommandExists $ServerName) {
-        return $true
+function Get-ClaudeCommandSpec {
+    $server = Get-ServerCommandSpec
+    return @{
+        Command = "claude"
+        Arguments = @("mcp", "add", "--transport", "stdio", "--scope", "user", $ServerName, "--", $server.Command) + $server.Arguments
     }
-
-    Write-Info "Windows 环境先尝试全局安装 $PackageName。"
-    if (Test-CommandExists "npm.cmd") {
-        [void](Invoke-External -Command "npm.cmd" -Arguments @("install", "-g", $PackageName))
-    }
-    elseif (Test-CommandExists "cmd") {
-        [void](Invoke-External -Command "cmd" -Arguments @("/c", "npm", "install", "-g", $PackageName))
-    }
-    else {
-        [void](Invoke-External -Command "npm" -Arguments @("install", "-g", $PackageName))
-    }
-
-    return Test-CommandExists $ServerName
 }
 
-function Get-CommandSpec {
-    param(
-        [string]$HostName,
-        [string]$Mode
-    )
-
-    if ($IsWindowsPlatform) {
-        if ($Mode -eq "global") {
-            $serverArgs = @("cmd", "/c", $ServerName)
-        }
-        else {
-            $serverArgs = @("cmd", "/c", "npx", "-y", $PackageName)
-        }
-    }
-    else {
-        if ($Mode -eq "global") {
-            $serverArgs = @($ServerName)
-        }
-        else {
-            $serverArgs = @("npx", "-y", $PackageName)
-        }
-    }
-
-    if ($HostName -eq "claude") {
-        return @{
-            Command = "claude"
-            Arguments = @("mcp", "add", "--transport", "stdio", "--scope", "user", $ServerName, "--") + $serverArgs
-        }
-    }
-
+function Get-CodexCommandSpec {
+    $server = Get-ServerCommandSpec
     return @{
         Command = "codex"
-        Arguments = @("mcp", "add", $ServerName, "--") + $serverArgs
+        Arguments = @("mcp", "add", $ServerName, "--", $server.Command) + $server.Arguments
     }
 }
 
 function Invoke-NativeAdd {
-    param(
-        [string]$HostName,
-        [string]$Mode
-    )
+    param([string]$HostName)
 
-    $spec = Get-CommandSpec -HostName $HostName -Mode $Mode
+    switch ($HostName) {
+        "claude" {
+            $spec = Get-ClaudeCommandSpec
+        }
+        "codex" {
+            $spec = Get-CodexCommandSpec
+        }
+        default {
+            throw "未知宿主：$HostName"
+        }
+    }
+
     $result = Invoke-External -Command $spec.Command -Arguments $spec.Arguments -AllowFailure
     return $result.Success
 }
@@ -323,30 +425,88 @@ function Set-ClaudeConfigValue {
     Set-Content -Path $configFile -Value $json -Encoding UTF8
 }
 
-function Write-ManualConfig {
-    param([string]$HostName)
+function Get-OpenCodeConfigFilePath {
+    return Join-Path $HOME ".config/opencode/opencode.json"
+}
 
-    if ($IsWindowsPlatform) {
-        if (Test-CommandExists $ServerName) {
-            $command = "cmd"
-            $arguments = @("/c", $ServerName)
-        }
-        else {
-            $command = "cmd"
-            $arguments = @("/c", "npx", "-y", $PackageName)
-        }
-    }
-    else {
-        $command = "npx"
-        $arguments = @("-y", $PackageName)
-    }
+function Set-OpenCodeConfigValue {
+    $configFile = Get-OpenCodeConfigFilePath
+    $configDir = Split-Path -Parent $configFile
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 
-    if ($HostName -eq "claude") {
-        Set-ClaudeConfigValue -Command $command -Arguments $arguments
+    $server = Get-ServerCommandSpec
+    $commandParts = @($server.Command) + $server.Arguments
+    $commandJson = ($commandParts | ConvertTo-Json -Compress)
+
+    @"
+const fs = require("fs");
+const file = process.argv[1];
+const serverName = process.argv[2];
+const command = JSON.parse(process.argv[3]);
+let config = {};
+if (fs.existsSync(file)) {
+  try {
+    config = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    config = {};
+  }
+}
+if (!config["`$schema"]) {
+  config["`$schema"] = "https://opencode.ai/config.json";
+}
+if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) {
+  config.mcp = {};
+}
+config.mcp[serverName] = {
+  type: "local",
+  command,
+  enabled: true
+};
+fs.writeFileSync(file, JSON.stringify(config, null, 2));
+"@ | node - $configFile $ServerName $commandJson
+}
+
+function Remove-OpenCodeConfigValue {
+    $configFile = Get-OpenCodeConfigFilePath
+    if (-not (Test-Path $configFile)) {
         return
     }
 
-    Set-CodexConfigValue -Command $command -Arguments $arguments
+    @"
+const fs = require("fs");
+const file = process.argv[1];
+const serverName = process.argv[2];
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch {
+  process.exit(0);
+}
+if (config.mcp && typeof config.mcp === "object" && !Array.isArray(config.mcp)) {
+  delete config.mcp[serverName];
+}
+fs.writeFileSync(file, JSON.stringify(config, null, 2));
+"@ | node - $configFile $ServerName
+}
+
+function Write-ManualConfig {
+    param([string]$HostName)
+
+    $server = Get-ServerCommandSpec
+    if ($HostName -eq "claude") {
+        Set-ClaudeConfigValue -Command $server.Command -Arguments $server.Arguments
+        return
+    }
+
+    if ($HostName -eq "codex") {
+        Set-CodexConfigValue -Command $server.Command -Arguments $server.Arguments
+        return
+    }
+
+    if ($HostName -eq "opencode") {
+        Set-OpenCodeConfigValue
+        return
+    }
 }
 
 function Install-Host {
@@ -355,40 +515,24 @@ function Install-Host {
     if ($Force) {
         Write-Info "检测到 --force，先移除 $HostName 的旧配置。"
         Remove-HostServer -HostName $HostName
+        Remove-HostFlag -HostName $HostName
     }
 
-    if ($IsWindowsPlatform) {
-        $hasGlobalBinary = Ensure-GlobalBinary
-        if (-not $hasGlobalBinary) {
-            throw "Windows 环境全局安装后仍未找到 $ServerName 命令。"
-        }
-
-        if (Invoke-NativeAdd -HostName $HostName -Mode "global") {
-            return "native-global-bin"
-        }
-
-        Write-Info "$HostName 原生命令注册失败，尝试 cmd /c npx -y 回退。"
-        if (Invoke-NativeAdd -HostName $HostName -Mode "npx") {
-            return "native-inline-npx"
-        }
+    if ($HostName -eq "opencode") {
+        Write-Info "开始写入 opencode 的 MCP 配置。"
+        Set-OpenCodeConfigValue
+        return
     }
-    else {
-        if (Invoke-NativeAdd -HostName $HostName -Mode "npx") {
-            return "native-inline-npx"
-        }
 
-        Write-Info "$HostName 原生 npx 注册失败，尝试直接调用全局命令。"
-        if ((Test-CommandExists $ServerName) -and (Invoke-NativeAdd -HostName $HostName -Mode "global")) {
-            return "native-global-bin"
-        }
+    if (Invoke-NativeAdd -HostName $HostName) {
+        return
     }
 
     Write-Info "$HostName 原生命令注册失败，改为写入当前用户配置文件。"
     Write-ManualConfig -HostName $HostName
-    return "manual-config"
 }
 
-function Assert-Ready {
+function Assert-HostsReady {
     param([string[]]$Hosts)
 
     $missing = @()
@@ -403,44 +547,108 @@ function Assert-Ready {
     }
 }
 
-$flagFile = Get-InitializationFilePath
+function Test-AllFlagsPresent {
+    param([string[]]$Hosts)
+
+    if (-not (Test-ServiceInitialized)) {
+        return $false
+    }
+
+    if (-not (Test-SharedServiceReady)) {
+        return $false
+    }
+
+    foreach ($targetName in $Hosts) {
+        if (-not (Test-HostInitialized -HostName $targetName)) {
+            return $false
+        }
+
+        if (-not (Test-HostInstalled -HostName $targetName)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+$stateDir = Get-StateDirectory
+$serviceFlag = Get-ServiceFlagPath
 Write-Info "开始执行 mindmap bootstrap。"
 Write-Info "ProjectRoot=$ProjectRoot"
 Write-Info "SkillRoot=$SkillRoot"
-Write-Info "InitializationFlag=$flagFile"
+Write-Info "StateDirectory=$stateDir"
+Write-Info "ServiceFlag=$serviceFlag"
+
+$hosts = Get-TargetHosts
 
 if ($CheckOnly) {
-    if (Test-Path $flagFile) {
-        Write-Info "已检测到初始化标志文件。"
+    if (Test-AllFlagsPresent -Hosts $hosts) {
+        Write-Info "已检测到共享服务标志与目标宿主标志。"
         exit 0
     }
 
-    Write-Info "未检测到初始化标志文件。"
+    Write-Info "共享服务标志或目标宿主标志缺失。"
     exit 1
 }
 
-if (Test-Initialized) {
-    Write-Info "已初始化，跳过。"
+if (Test-AllFlagsPresent -Hosts $hosts) {
+    Write-Info "共享服务与目标宿主均已初始化，跳过。"
     exit 0
 }
 
-Test-NodeToolchain
-$hosts = Get-TargetHosts
-
 if ($Force) {
-    Remove-InitializationFlag
+    Remove-ServiceFlag
+}
+
+$serviceInitialized = Test-ServiceInitialized
+if ($serviceInitialized -and -not (Test-SharedServiceReady)) {
+    Write-Info "检测到共享服务标志，但共享服务实际不可用，移除标志后重新准备。"
+    Remove-ServiceFlag
+    $serviceInitialized = $false
+}
+
+if (-not $serviceInitialized) {
+    Write-Info "开始准备共享服务。"
+    Ensure-SharedService
+    if (-not (Test-SharedServiceReady)) {
+        Remove-ServiceFlag
+        throw "共享服务准备后仍不可用。"
+    }
+
+    Write-ServiceFlag
+}
+else {
+    Write-Info "已检测到共享服务标志，跳过共享服务准备。"
 }
 
 foreach ($targetName in $hosts) {
+    $hostInitialized = Test-HostInitialized -HostName $targetName
+    if ($hostInitialized -and -not (Test-HostInstalled -HostName $targetName)) {
+        Write-Info "检测到 $targetName 宿主标志，但注册实际不可用，移除标志后重新注册。"
+        Remove-HostFlag -HostName $targetName
+        $hostInitialized = $false
+    }
+
+    if ($hostInitialized) {
+        Write-Info "已检测到 $targetName 宿主标志，跳过注册。"
+        continue
+    }
+
     if ((Test-HostInstalled -HostName $targetName) -and -not $Force) {
-        Write-Info "$targetName 已安装 $ServerName，跳过注册。"
+        Write-Info "$targetName 已存在 $ServerName 注册，补写宿主标志。"
+        Write-HostFlag -HostName $targetName
         continue
     }
 
     Write-Info "开始为 $targetName 安装/修复 $ServerName。"
-    [void](Install-Host -HostName $targetName)
+    Install-Host -HostName $targetName
+    if (-not (Test-HostInstalled -HostName $targetName)) {
+        Remove-HostFlag -HostName $targetName
+        throw "$targetName 的 MCP 注册后仍不可用。"
+    }
+
+    Write-HostFlag -HostName $targetName
 }
 
-Assert-Ready -Hosts $hosts
-Write-InitializationFlag
+Assert-HostsReady -Hosts $hosts
 Write-Info "bootstrap 完成。"

@@ -1,7 +1,7 @@
 interface:
   display_name: "Mindmap"
   short_description: "当用户需要把内容生成思维导图、流程图或结构图时触发"
-  default_prompt: "优先检查全局初始化标志文件；仅当标志文件不存在，或 markmap-mcp-server 调用出现环境类错误时，才参考 references/bootstrap.md 执行 bootstrap。bootstrap 修复后只重试一次。"
+  default_prompt: "优先检查共享服务标志与当前宿主标志；仅当标志缺失，或 markmap-mcp-server 调用出现环境类错误时，才参考 references/bootstrap.md 执行 bootstrap。bootstrap 必须显式指定当前宿主，不要自动推断目标宿主；共享服务与宿主注册要分开处理，且都要在真实验证通过后才写标志。修复后只重试一次。"
 policy:
   allow_implicit_invocation: false
 dependencies:
