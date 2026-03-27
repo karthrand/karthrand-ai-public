@@ -11,9 +11,18 @@
 
 ## 依赖要求
 
-⚠️ **使用本 Skill 前必须安装 markmap-mcp-server MCP**
+⚠️ **使用本 Skill 前必须具备 `markmap-mcp-server` MCP**
 
-本 Skill 依赖 [markmap-mcp-server](https://github.com/jinzcdev/markmap-mcp-server) MCP 服务，请根据您使用的工具选择对应的安装方式。
+本 Skill 已内置 bootstrap 脚本。首次调用时会先检测当前环境中的 `claude` / `codex`，然后自动完成 `markmap-mcp-server` 的安装或修复。
+
+自动安装策略：
+
+- **类 Unix（macOS/Linux）**：优先使用 `npx -y`
+- **Windows**：优先全局安装包，再直接调用 `markmap-mcp-server`
+- **注册方式**：优先使用 `codex mcp add` / `claude mcp add`
+- **最终回退**：原生命令失败时，写入当前用户配置文件
+
+如需手动安装，请根据您使用的工具选择对应方式。
 
 ### MCP 依赖安装
 
@@ -22,13 +31,14 @@
 ##### **类 Unix (macOS/Linux)**
 
 ```bash
-claude mcp add markmap-mcp-server --scope user -- npx -y @jinzcdev/markmap-mcp-server
+claude mcp add --transport stdio --scope user markmap-mcp-server -- npx -y @jinzcdev/markmap-mcp-server
 ```
 
 #####  **Windows (PowerShell)**
 
 ```powershell
-claude mcp add markmap-mcp-server --scope user -- cmd /c npx -y @jinzcdev/markmap-mcp-server
+npm install -g @jinzcdev/markmap-mcp-server
+claude mcp add --transport stdio --scope user markmap-mcp-server -- cmd /c markmap-mcp-server
 ```
 
 ####  Codex 安装方式
@@ -42,7 +52,24 @@ codex mcp add markmap-mcp-server -- npx -y @jinzcdev/markmap-mcp-server
 ##### **Windows (PowerShell)**：
 
 ```powershell
-codex mcp add markmap-mcp-server -- cmd /c npx -y @jinzcdev/markmap-mcp-server
+npm install -g @jinzcdev/markmap-mcp-server
+codex mcp add markmap-mcp-server -- cmd /c markmap-mcp-server
+```
+
+### bootstrap 手动执行
+
+如果您想先独立完成预检查，可直接执行：
+
+#### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\skills\mindmap\scripts\bootstrap.ps1 -ProjectRoot "$PWD" -SkillRoot "$PWD\skills\mindmap"
+```
+
+#### 类 Unix
+
+```bash
+bash ./skills/mindmap/scripts/bootstrap.sh --project-root "$PWD" --skill-root "$PWD/skills/mindmap"
 ```
 
 ### 验证 MCP 安装
@@ -65,6 +92,26 @@ claude mcp list
 
 ```bash
 codex mcp list
+```
+
+## 故障排查
+
+### Windows 下 Claude Code 安装异常
+
+优先按以下顺序处理：
+
+1. 先执行 `npm install -g @jinzcdev/markmap-mcp-server`
+2. 再执行 `claude mcp add --transport stdio --scope user markmap-mcp-server -- cmd /c markmap-mcp-server`
+3. 若 `claude mcp add` 仍失败，再编辑当前用户的 `~/.claude.json`
+
+### 强制重装
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\skills\mindmap\scripts\bootstrap.ps1 -ProjectRoot "$PWD" -SkillRoot "$PWD\skills\mindmap" -Force
+```
+
+```bash
+bash ./skills/mindmap/scripts/bootstrap.sh --project-root "$PWD" --skill-root "$PWD/skills/mindmap" --force
 ```
 
 ## 安装 Skill
