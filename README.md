@@ -25,7 +25,7 @@ git config --global https.https://github.com.proxy http://127.0.0.1:7890
 - 添加单个Skill
 
 ```bash 
-npx skills add https://github.com/karthrand/karthrand-ai-private.git --skill mindmap
+npx skills add https://github.com/karthrand/karthrand-ai-public.git --skill mindmap
 ```
 
 ## 目录结构
