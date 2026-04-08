@@ -1,13 +1,13 @@
-# Search-Web Skill 使用示例
+# Search-Web 技能使用示例
 
 本文档提供 `search-web` skill 的参数示例、搜索链路示例和常见失败示例。
 
 ## 何时读取本文件
 
 - 只需要最小执行流程时，不读本文件，直接按 `SKILL.md` 执行
-- 需要 `Context7`、`Exa`、网页读取或 `DeepWiki` 的参数示例时，读取对应章节
+- 需要 `Context7`、`Exa`、网页正文读取或 `DeepWiki` 的参数示例时，读取对应章节
 - 需要 `Context7` 的错误示范、调用顺序示例或多源整合案例时，优先读取“Context7 文档搜索”
-- 需要网页读取降级策略时，读取“网页清洗降级”
+- 需要网页读取降级策略时，读取“网页正文读取降级”
 - 需要常见失败场景或排障提示时，读取“常见问题处理”
 - 需要配置或修复必需 MCP 时，直接跳到 `../references/setup.md`
 
@@ -27,7 +27,7 @@ graph TD
     G -->|否| I[Exa]
     H --> I
     I --> J{命中类型}
-    J -->|网页正文| K[markdown.new 或直接读取]
+    J -->|网页正文| K[已知 URL 后正文读取]
     J -->|GitHub 仓库| L[DeepWiki]
     J -->|普通网页| M[整理搜索结果]
     K --> N[整合回答]
@@ -40,16 +40,20 @@ graph TD
 1. 使用时先检查状态文件和真实环境
 2. `Context7`、`Exa`、`DeepWiki` 任一缺失都先修复
 3. 技术文档问题先走 `Context7`
-4. `Context7` 之后仍继续走 `Exa`
-5. 命中 GitHub 仓库时优先走 `DeepWiki`
+4. 联网搜索固定只用 `Exa`，不得切换其他搜索型 MCP
+5. `Context7` 之后仍继续走 `Exa`
+6. 命中 GitHub 仓库时优先走 `DeepWiki`
+7. 网页正文读取只允许发生在“已知 URL 的非搜索读取”阶段，不能替代 `Exa`
 
 ## 首次使用示例
 
 ```text
-1. 先读取 bootstrap-state.json
-2. 逐项复验 context7、exa、mcp-deepwiki
-3. 如果任一项缺失，立即进入 references/setup.md
-4. 所有必需项通过后，才开始正式搜索
+1. 先运行 sh scripts/detect-agent.sh
+2. 如果结果是 unknown，立即停止 setup 并说明无法识别当前宿主
+3. 再读取 bootstrap-state.json
+4. 逐项复验 context7、exa、mcp-deepwiki
+5. 如果任一项缺失，立即进入 references/setup.md
+6. 所有必需项通过后，才开始正式搜索
 ```
 
 ## Context7 文档搜索
@@ -62,6 +66,7 @@ graph TD
 4. 从解析结果中选择 `libraryId`
 5. 调用 `mcp__context7__query-docs({ libraryId, query })`
 6. 再调用 `Exa` 补网页资料、最新信息或官方入口
+7. 不允许用其他搜索型 MCP 代替 `Exa`
 
 ### 选择结果的规则
 
@@ -113,6 +118,12 @@ parameters:
 
 ## Exa 网络搜索
 
+固定规则：
+
+- 联网搜索必须使用 `Exa`
+- `Exa` 不可用时，返回 `references/setup.md` 做修复
+- 不得切换到 `open-websearch` 或其他搜索型 MCP
+
 ### 示例 1：通用网页搜索
 
 ```yaml
@@ -142,7 +153,13 @@ parameters:
   numResults: 5
 ```
 
-## 网页清洗降级
+## 网页正文读取降级
+
+固定前提：
+
+- 用户已经给出明确 URL，或 `Exa` 已经命中目标网页
+- 本阶段是“读取正文”，不是“继续搜索”
+- 如果宿主没有提供正文读取工具，就只返回链接与失败说明
 
 ### 两层降级策略
 
@@ -201,7 +218,7 @@ parameters:
 ### 示例 1：技术文档 + 网页补充
 
 ```yaml
-# 前置检查：已通过会话环境信号 / system prompt / 工具集指纹之一唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -225,7 +242,7 @@ parameters:
 ### 示例 2：最新资讯
 
 ```yaml
-# 前置检查：已通过会话环境信号 / system prompt / 工具集指纹之一唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -248,7 +265,7 @@ parameters:
 ### 示例 3：文档 + 仓库联合分析
 
 ```yaml
-# 前置检查：已通过会话环境信号 / system prompt / 工具集指纹之一唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -285,7 +302,7 @@ parameters:
 ### 示例 5：宿主信号冲突时停止
 
 ```text
-当前状态：同时检测到多个宿主信号，无法唯一确认当前 code agent 类型
+当前状态：`sh scripts/detect-agent.sh` 返回 `unknown`
 处理方式：直接返回 unknown，不继续猜配置路径，也不开始 setup
 ```
 
@@ -311,6 +328,14 @@ parameters:
 如果环境正常但仓库不可达，直接说明仓库可能私有、已删除或当前网络不可达，不把失败包装成已读取成功。
 ```
 
+### Q4：`Exa` 不可用时能不能换别的搜索 MCP？
+
+```text
+不能。
+联网搜索固定只允许 `Exa`。
+`Exa` 缺失、未注册或连接失败时，必须回到 references/setup.md 修复。
+```
+
 ## MCP 工具快速参考
 
 | 工具 | 用途 | 关键参数 |
@@ -319,5 +344,5 @@ parameters:
 | `mcp__context7__query-docs` | 查询技术文档 | `libraryId`, `query` |
 | `mcp__exa__web_search_exa` | 通用网页搜索 | `query`, `numResults`, `includeDomains` |
 | `mcp__exa__get_code_context_exa` | 代码与技术资料搜索 | `query`, `numResults` |
-| `mcp__fetch__fetch` | 获取网页正文 | `url`, `max_length`, `raw` |
+| `mcp__fetch__fetch` | 获取已知 URL 的网页正文，不参与搜索 | `url`, `max_length`, `raw` |
 | `mcp__mcp-deepwiki__deepwiki_fetch` | GitHub 仓库查询 | `url`, `maxDepth`, `mode` |

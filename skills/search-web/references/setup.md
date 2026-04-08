@@ -1,4 +1,4 @@
-# Search-Web Setup
+# Search-Web 初始化
 
 ## 何时读取
 
@@ -10,7 +10,7 @@
 - `Context7`、`Exa`、`DeepWiki` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
 - 需要为 `Claude Code`、`Codex` 或 `OpenCode` 配置 `search-web` 的必需 MCP
 
-## 必需依赖
+## 必需依赖与工具边界
 
 本 skill 的必需 MCP 固定为：
 
@@ -20,42 +20,38 @@
 
 只有这三项都已安装且真实可用，才允许返回主流程。
 
+固定边界：
+
+- 联网搜索只能使用 `Exa`
+- `Context7` 只负责技术文档
+- `mcp-deepwiki` 只负责 GitHub 仓库
+- 网页正文读取不属于必需 MCP；只有用户已给出明确 URL，或 `Exa` 已经定位到目标网页后，才允许使用宿主已提供的正文读取工具
+- 不得把其他搜索型 MCP 当成 `Exa` 的替代品
+
 ## 宿主识别方式
 
-先识别当前宿主，固定输出：
+多宿主 setup 必须先识别当前宿主，且只能调用本 skill 自己的脚本副本：
 
-- `agent_type`：`claudecode` / `codex` / `opencode` / `unknown`
-- `detection_source`：`session_env` / `system_prompt` / `tool_fingerprint` / `unknown`
+- `sh scripts/detect-agent.sh`
+- `sh scripts/detect-agent.sh -v`
 
-固定检测顺序：
+固定规则：
 
-1. 先看当前会话中的精确宿主环境信号：
-   - `claudecode`：`CLAUDECODE=1`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_SESSION_ID`
-   - `codex`：精确 `CODEX_*` 会话变量，优先 `CODEX_THREAD_ID`
-   - `opencode`：`OPENCODE_SESSION_ID`、`OPENCODE_SESSION`；只有没有其他宿主信号冲突时，才允许退化为 `OPENCODE_*` 前缀变量族
-2. 如果环境变量无法唯一确认，再看当前会话的 system prompt 或 developer prompt 中是否存在唯一宿主标识：
-   - `claudecode`：例如 `You are Claude Code`
-   - `codex`：例如 `You are Codex`
-   - `opencode`：当前宿主明确暴露的唯一身份标识
-3. 如果 system prompt 仍无法唯一确认，再看工具集指纹是否唯一对应某个宿主：
-   - `Claude Code` 常见指纹：`Agent`、`TaskCreate`、`TodoWrite`、`CronCreate`、`TeamCreate`、`Skill`、`mcp__*`
-   - `OpenCode` 常见指纹：工具名整体偏小写，且更接近 `view` 这类命名风格
-   - `Codex`：以当前会话实际暴露的 Codex 工具族为准，必须能和其他宿主区分
-4. 任一步如果出现多宿主信号冲突，或者仍无法唯一确认时，一律返回 `unknown`
+1. `scripts/detect-agent.sh` 必须是从 `skill-harness` 复制过来的物理副本，不能通过跨 skill 相对路径引用，也不能使用符号链接。
+2. `sh scripts/detect-agent.sh` 的输出只能是 `claude-code`、`codex`、`opencode`、`unknown`。
+3. 如果输出为 `unknown`，立即停止，不继续猜测配置路径，也不写入宿主专属状态。
+4. 如果需要查看判定依据，才运行 `sh scripts/detect-agent.sh -v`。
 
-禁止作为当前宿主判定依据：
+禁止做法：
 
-- 不存在的 `KARTHRAND_AGENT_TYPE`
-- 仅凭本机装过 `claude`、`codex`、`opencode` 命令
-- 仅凭父进程名或上层可执行文件名猜测
-- 仅凭宽泛的 `CLAUDE_*`、`CODEX_*`、`OPENCODE_*` 前缀直接判定
-- 仅凭某个配置文件存在，或只说明“理论支持某宿主”，但没有当前会话证据
-
-如果 `agent_type=unknown`，立即停止，不继续猜测配置路径，也不写入宿主专属状态。
+- 自行编写内联宿主检测逻辑
+- 通过 `system prompt`、工具指纹、父进程名或本机命令存在性猜当前宿主
+- 用跨 skill 路径调用别的 `detect-agent.sh`
+- 在 `unknown` 状态下继续执行宿主专属 setup
 
 ## 固定决策
 
-1. 先完成宿主识别。
+1. 先运行 `sh scripts/detect-agent.sh` 完成宿主识别。
 2. 再读取用户级状态文件 `bootstrap-state.json`：
    - Windows：`%LOCALAPPDATA%\search-web\bootstrap-state.json`
    - 类 Unix：`$XDG_DATA_HOME/search-web/bootstrap-state.json`
@@ -83,14 +79,14 @@
   "version": 1,
   "updatedAt": "ISO-8601",
   "runtime": {
-    "agentType": "claudecode|codex|opencode|unknown",
-    "detectionSource": "session_env|system_prompt|tool_fingerprint|unknown"
+    "agentType": "claude-code|codex|opencode|unknown",
+    "detectionSource": "session_env|unknown"
   },
   "items": [
     {
       "name": "context7",
       "type": "mcp",
-      "host": "claudecode|codex|opencode",
+      "host": "claude-code|codex|opencode",
       "installed": true,
       "verifiedAt": "ISO-8601",
       "lastError": ""
@@ -98,7 +94,7 @@
     {
       "name": "exa",
       "type": "mcp",
-      "host": "claudecode|codex|opencode",
+      "host": "claude-code|codex|opencode",
       "installed": true,
       "verifiedAt": "ISO-8601",
       "credentialPrompted": true,
@@ -108,7 +104,7 @@
     {
       "name": "mcp-deepwiki",
       "type": "mcp",
-      "host": "claudecode|codex|opencode",
+      "host": "claude-code|codex|opencode",
       "installed": true,
       "verifiedAt": "ISO-8601",
       "lastError": ""
@@ -119,6 +115,8 @@
 
 固定规则：
 
+- `agentType` 只能来自 `scripts/detect-agent.sh` 的结果
+- `detectionSource` 只允许记录 `session_env` 或 `unknown`
 - 默认不记录真实 `EXA_API_KEY`
 - 只允许记录是否问过、来源和最近一次验证结果
 - 状态文件只能写到用户级数据目录，不能写回仓库
@@ -380,17 +378,20 @@ Windows 下可写成：
 ## 成功标准
 
 - 当前宿主里已经存在有效的 `context7`、`exa`、`mcp-deepwiki` 配置
+- 宿主识别由 `sh scripts/detect-agent.sh` 完成，且结果不是 `unknown`
 - 真实检测确认三项都已注册可用
 - setup 状态文件已更新到用户级数据目录
 - 返回主流程前，不再存在必需 MCP 缺失项
 
 ## 常见错误
 
-- 没先做宿主识别，就直接套用某个宿主的配置格式
+- 没先运行 `sh scripts/detect-agent.sh`，就直接套用某个宿主的配置格式
+- 继续保留手写的环境变量 / prompt / 工具指纹探测逻辑
 - 没先检查状态文件，就直接开始调 `Context7`、`Exa` 或 `DeepWiki`
 - 只看状态文件，不复验当前宿主真实环境
-- 只因本机装过某个宿主命令、父进程名像某宿主，或宽泛前缀变量存在，就误判当前会话宿主
+- 通过跨 skill 相对路径调用别的 `detect-agent.sh`
 - 没写死不同宿主的配置路径，交给 agent 自己猜
 - `Codex` 把 `context7` 或 `mcp-deepwiki` 错写成远程 URL 配置
 - 用户明确没有 key，却仍然给 `exa` 传入占位符 key
 - 用户明确有 key，却不先索取就直接写配置
+- 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具
