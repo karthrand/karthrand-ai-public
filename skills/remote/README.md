@@ -2,7 +2,7 @@
 
 `remote` 是一个面向内部场景的 Linux 服务器远程访问 skill。它默认使用 `sshpass`，并在宿主本地状态目录保存：
 
-- `bootstrap-state.json`：`sshpass` setup 与验证状态
+- `bootstrap-state.json`：当前运行时对应的 `sshpass` setup 与验证状态
 - `servers.json`：服务器地址、端口、用户名、密码与最近一次验证结果
 
 ## 目录结构
@@ -38,11 +38,16 @@ skills/remote/
 
 ### Windows
 
-必须先执行：
+先执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 ```
+
+`setup.ps1` 会先识别当前 `bash` 运行时：
+
+- 命中 `WSL` 时，转到 `setup.sh`，在 WSL 内安装 Linux `sshpass`
+- 命中 `MSYS/Git Bash` 时，安装 `sshpass-win32`
 
 ### macOS / Linux
 
@@ -50,21 +55,20 @@ powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 bash ./skills/remote/scripts/setup.sh
 ```
 
-验证方式：
+验证方式不再只依赖 `sshpass -V`。统一规则是：
 
-```bash
-sshpass -V
-```
+- 命令存在
+- `sshpass -V` 或 `sshpass -h` 至少一种可识别
 
 ## 远程执行
 
 ### Windows
 
-Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部固定转发到 `bash -lc`：
+Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部固定转发到 `bash -lc`，并把当前运行时标记成 `wsl` 或 `msys`：
 
 ```powershell
 .\skills\remote\scripts\remote.ps1 --save "10.0.0.8" --user root --password "secret"
-.\skills\remote\scripts\remote.ps1 "10.0.0.8" "hostname && whoami"
+.\skills\remote\scripts\remote.ps1 --user root --password "secret" "10.0.0.8" "hostname && whoami"
 ```
 
 如果手工执行，也只能显式使用：

@@ -54,6 +54,25 @@ is_wsl_env() {
   return 1
 }
 
+convert_windows_path() {
+  local raw_path="$1"
+  if [ -z "$raw_path" ]; then
+    return 1
+  fi
+
+  if has_cmd wslpath; then
+    wslpath "$raw_path"
+    return 0
+  fi
+
+  if has_cmd cygpath; then
+    cygpath -u "$raw_path"
+    return 0
+  fi
+
+  printf '%s\n' "$raw_path"
+}
+
 ensure_windows_bash_lc() {
   if ! is_windows_env && ! is_wsl_env; then
     return 0
@@ -79,15 +98,116 @@ python_cmd() {
   return 1
 }
 
+current_host_os() {
+  if [ -n "${REMOTE_HOST_OS:-}" ]; then
+    printf '%s\n' "$REMOTE_HOST_OS"
+    return 0
+  fi
+
+  local uname_out
+  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
+  case "$uname_out" in
+    Darwin)
+      printf 'darwin\n'
+      ;;
+    Linux)
+      printf 'linux\n'
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      printf 'windows\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
+}
+
+current_bash_flavor() {
+  if [ -n "${REMOTE_HOST_BASH_FLAVOR:-}" ]; then
+    printf '%s\n' "$REMOTE_HOST_BASH_FLAVOR"
+    return 0
+  fi
+
+  local uname_out
+  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
+  case "$uname_out" in
+    MINGW*|MSYS*|CYGWIN*)
+      printf 'msys\n'
+      ;;
+    Linux)
+      if is_wsl_env; then
+        printf 'wsl\n'
+      else
+        printf 'native\n'
+      fi
+      ;;
+    Darwin)
+      printf 'native\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
+}
+
+current_bash_path() {
+  if [ -n "${REMOTE_HOST_BASH_PATH:-}" ]; then
+    printf '%s\n' "$REMOTE_HOST_BASH_PATH"
+    return 0
+  fi
+
+  if has_cmd bash; then
+    command -v bash
+    return 0
+  fi
+
+  printf '\n'
+}
+
+current_bash_available() {
+  if [ -n "$(current_bash_path)" ]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+current_sshpass_provider() {
+  case "$(current_bash_flavor)" in
+    msys)
+      printf 'windows\n'
+      ;;
+    wsl|native)
+      printf 'linux\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
+}
+
+current_windows_remote_ready() {
+  if [ "$(current_host_os)" = "windows" ] && [ "${REMOTE_BASH_LC:-}" = "1" ] && [ "$(current_bash_flavor)" != "unknown" ]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+refresh_runtime_context() {
+  CURRENT_HOST_OS="$(current_host_os)"
+  CURRENT_BASH_FLAVOR="$(current_bash_flavor)"
+  CURRENT_BASH_PATH="$(current_bash_path)"
+  CURRENT_BASH_AVAILABLE="$(current_bash_available)"
+  CURRENT_SSHPASS_PROVIDER="$(current_sshpass_provider)"
+  CURRENT_WINDOWS_REMOTE_READY="$(current_windows_remote_ready)"
+}
+
 state_dir() {
   local base_path
-  if [ -n "${LOCALAPPDATA:-}" ]; then
-    base_path="${LOCALAPPDATA}\\remote"
-    if has_cmd cygpath; then
-      cygpath -u "$base_path"
-      return 0
-    fi
-    printf '%s\n' "$base_path"
+  base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-${LOCALAPPDATA:-}}"
+  if [ -n "$base_path" ]; then
+    printf '%s/remote\n' "$(convert_windows_path "$base_path")"
     return 0
   fi
 
@@ -107,11 +227,180 @@ servers_state_file() {
   printf '%s/servers.json\n' "$(state_dir)"
 }
 
-ensure_sshpass() {
-  if has_cmd sshpass && sshpass -V >/dev/null 2>&1; then
+extract_version_from_text() {
+  printf '%s\n' "$1" | tr '\r' '\n' | sed -nE 's/.*([0-9]+\.[0-9]+).*/\1/p' | head -n 1
+}
+
+probe_sshpass() {
+  PROBED_SSHPASS_VERSION="unknown"
+
+  has_cmd sshpass || return 1
+
+  local output version
+  output="$(sshpass -V 2>&1 || true)"
+  if [ -n "$output" ] && ! printf '%s' "$output" | grep -qi 'invalid option'; then
+    if printf '%s' "$output" | grep -qi 'sshpass\|usage:'; then
+      version="$(extract_version_from_text "$output")"
+      [ -n "$version" ] && PROBED_SSHPASS_VERSION="$version"
+      return 0
+    fi
+  fi
+
+  output="$(sshpass -h 2>&1 || true)"
+  if printf '%s' "$output" | grep -qi 'usage:'; then
+    version="$(extract_version_from_text "$output")"
+    [ -n "$version" ] && PROBED_SSHPASS_VERSION="$version"
     return 0
   fi
 
+  output="$(sshpass 2>&1 || true)"
+  if printf '%s' "$output" | grep -qi 'usage:'; then
+    return 0
+  fi
+
+  return 1
+}
+
+load_bootstrap_state() {
+  if ! BOOTSTRAP_STATE_JSON="$(
+    BOOTSTRAP_STATE_FILE="$(bootstrap_state_file)" \
+    "$PYTHON_BIN" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+state_file = Path(os.environ["BOOTSTRAP_STATE_FILE"])
+if not state_file.exists():
+    raise SystemExit(3)
+
+payload = json.loads(state_file.read_text(encoding="utf-8"))
+print(json.dumps(payload, ensure_ascii=False))
+PY
+  )"; then
+    return 1
+  fi
+
+  return 0
+}
+
+read_bootstrap_field() {
+  local field_name="$1"
+  RECORD_JSON="$BOOTSTRAP_STATE_JSON" FIELD_NAME="$field_name" "$PYTHON_BIN" - <<'PY'
+import json
+import os
+
+record = json.loads(os.environ["RECORD_JSON"])
+value = record.get(os.environ["FIELD_NAME"], "")
+if isinstance(value, bool):
+    print(str(value).lower())
+else:
+    print("" if value is None else value)
+PY
+}
+
+bootstrap_matches_runtime() {
+  local saved_bash_path
+
+  [ "$(read_bootstrap_field os_type)" = "$CURRENT_HOST_OS" ] || return 1
+  [ "$(read_bootstrap_field bash_available)" = "$CURRENT_BASH_AVAILABLE" ] || return 1
+  [ "$(read_bootstrap_field bash_flavor)" = "$CURRENT_BASH_FLAVOR" ] || return 1
+  [ "$(read_bootstrap_field sshpass_provider)" = "$CURRENT_SSHPASS_PROVIDER" ] || return 1
+
+  saved_bash_path="$(read_bootstrap_field bash_path)"
+  if [ -n "$CURRENT_BASH_PATH" ] || [ -n "$saved_bash_path" ]; then
+    [ "$saved_bash_path" = "$CURRENT_BASH_PATH" ] || return 1
+  fi
+
+  if [ "$CURRENT_HOST_OS" = "windows" ]; then
+    [ "$(read_bootstrap_field windows_remote_ready)" = "true" ] || return 1
+  fi
+
+  return 0
+}
+
+write_bootstrap_state() {
+  local installed="$1"
+  local version="$2"
+  local touch_setup="${3:-false}"
+
+  refresh_runtime_context
+
+  STATE_DIR="$(state_dir)" \
+  BOOTSTRAP_STATE_FILE="$(bootstrap_state_file)" \
+  INSTALLED="$installed" \
+  VERSION="$version" \
+  TOUCH_SETUP="$touch_setup" \
+  CURRENT_HOST_OS="$CURRENT_HOST_OS" \
+  CURRENT_BASH_AVAILABLE="$CURRENT_BASH_AVAILABLE" \
+  CURRENT_BASH_FLAVOR="$CURRENT_BASH_FLAVOR" \
+  CURRENT_BASH_PATH="$CURRENT_BASH_PATH" \
+  CURRENT_SSHPASS_PROVIDER="$CURRENT_SSHPASS_PROVIDER" \
+  CURRENT_WINDOWS_REMOTE_READY="$CURRENT_WINDOWS_REMOTE_READY" \
+  "$PYTHON_BIN" - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+state_dir = Path(os.environ["STATE_DIR"])
+state_file = Path(os.environ["BOOTSTRAP_STATE_FILE"])
+state_dir.mkdir(parents=True, exist_ok=True)
+now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+if state_file.exists():
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+else:
+    payload = {"skill_name": "remote"}
+
+payload["skill_name"] = "remote"
+payload["sshpass_installed"] = os.environ["INSTALLED"] == "true"
+payload["sshpass_version"] = os.environ["VERSION"]
+payload["os_type"] = os.environ["CURRENT_HOST_OS"]
+payload["bash_available"] = os.environ["CURRENT_BASH_AVAILABLE"] == "true"
+payload["bash_flavor"] = os.environ["CURRENT_BASH_FLAVOR"]
+payload["bash_path"] = os.environ["CURRENT_BASH_PATH"]
+payload["sshpass_provider"] = os.environ["CURRENT_SSHPASS_PROVIDER"]
+payload["windows_remote_ready"] = os.environ["CURRENT_WINDOWS_REMOTE_READY"] == "true" and os.environ["INSTALLED"] == "true"
+payload["last_verified_at"] = now
+if os.environ["TOUCH_SETUP"] == "true":
+    payload["last_setup_at"] = now
+else:
+    payload["last_setup_at"] = payload.get("last_setup_at") or now
+
+state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+ensure_sshpass() {
+  refresh_runtime_context
+
+  local bootstrap_present="false"
+  local bootstrap_matches="false"
+  local bootstrap_installed="false"
+
+  if load_bootstrap_state; then
+    bootstrap_present="true"
+    if bootstrap_matches_runtime; then
+      bootstrap_matches="true"
+      bootstrap_installed="$(read_bootstrap_field sshpass_installed)"
+      if [ "$bootstrap_installed" = "true" ] && has_cmd sshpass; then
+        return 0
+      fi
+    fi
+  fi
+
+  if probe_sshpass; then
+    if [ "$bootstrap_present" = "true" ] && [ "$bootstrap_matches" = "false" ]; then
+      log "检测到 bootstrap-state 与当前运行时不一致，已按当前环境重新校验 sshpass。"
+    elif [ "$bootstrap_present" = "true" ] && [ "$bootstrap_installed" != "true" ]; then
+      log "状态文件显示 sshpass 未就绪，已按真实环境重新校验。"
+    fi
+
+    write_bootstrap_state "true" "$PROBED_SSHPASS_VERSION" "false"
+    return 0
+  fi
+
+  write_bootstrap_state "false" "unknown" "false"
   log "未检测到可用的 sshpass，请先执行 skills/remote/scripts/setup.sh 或 setup.ps1。"
   exit 10
 }
@@ -327,48 +616,12 @@ run_remote_command() {
 }
 
 update_bootstrap_verified_at() {
-  local version
-  local is_windows
-  is_windows="false"
-  version="$(sshpass -V 2>&1 | head -n 1 | sed -E 's/.*([0-9]+\.[0-9]+).*/\1/')"
-  if is_windows_env; then
-    is_windows="true"
+  local version="unknown"
+  if probe_sshpass; then
+    version="$PROBED_SSHPASS_VERSION"
   fi
 
-  STATE_DIR="$(state_dir)" \
-  BOOTSTRAP_STATE_FILE="$(bootstrap_state_file)" \
-  VERSION="$version" \
-  IS_WINDOWS="$is_windows" \
-  "$PYTHON_BIN" - <<'PY'
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-
-state_dir = Path(os.environ["STATE_DIR"])
-state_file = Path(os.environ["BOOTSTRAP_STATE_FILE"])
-state_dir.mkdir(parents=True, exist_ok=True)
-now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-
-if state_file.exists():
-    payload = json.loads(state_file.read_text(encoding="utf-8"))
-else:
-    payload = {"skill_name": "remote"}
-
-payload["skill_name"] = "remote"
-payload["sshpass_installed"] = True
-payload["sshpass_version"] = os.environ["VERSION"]
-payload["last_verified_at"] = now
-payload.setdefault("last_setup_at", now)
-if os.environ.get("IS_WINDOWS") == "true":
-    payload["os_type"] = "windows"
-    payload["bash_available"] = True
-    payload["windows_remote_ready"] = True
-else:
-    payload.setdefault("os_type", "unknown")
-
-state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-PY
+  write_bootstrap_state "true" "$version" "false"
 }
 
 render_single_result() {

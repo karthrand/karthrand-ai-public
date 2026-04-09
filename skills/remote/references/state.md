@@ -9,14 +9,19 @@
 
 ## 1. bootstrap-state.json
 
-用于表达 setup 结果，推荐结构：
+用于表达 setup 结果与当前运行时的对应关系，推荐结构：
 
 ```json
 {
   "skill_name": "remote",
   "sshpass_installed": true,
-  "sshpass_version": "1.09",
-  "os_type": "linux",
+  "sshpass_version": "unknown",
+  "os_type": "windows",
+  "bash_available": true,
+  "bash_flavor": "wsl",
+  "bash_path": "C:\\Windows\\System32\\bash.exe",
+  "sshpass_provider": "linux",
+  "windows_remote_ready": true,
   "last_setup_at": "2026-04-09T12:00:00+08:00",
   "last_verified_at": "2026-04-09T12:00:00+08:00"
 }
@@ -26,9 +31,19 @@
 
 - 只表达安装与验证结果
 - 不保存服务器业务数据
-- Windows 下额外记录：
-  - `bash_available`
-  - `windows_remote_ready`
+- `sshpass_version` 允许为 `"unknown"`
+- `bash_flavor` 允许值：
+  - `wsl`
+  - `msys`
+  - `native`
+  - `unknown`
+- `sshpass_provider` 允许值：
+  - `linux`
+  - `windows`
+  - `unknown`
+- 当 `bash_flavor=wsl` 时，`sshpass_provider` 必须是 `linux`
+- 当 `bash_flavor=msys` 时，`sshpass_provider` 必须是 `windows`
+- 当前运行时与状态文件不一致时，状态视为过期，需要重新按真实环境复核
 
 ## 2. servers.json
 

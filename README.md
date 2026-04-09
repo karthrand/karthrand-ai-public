@@ -20,12 +20,19 @@ git config --global https.https://github.com.proxy http://127.0.0.1:7890
 | `mindmap` | 通用 | 将上下文的内容转换为思维导图 |
 | `plan-mode` | 通用 | 基于专业文档和网络搜素获取信息为基准的Plan模式 |
 | `plugin-builder` | AI | 快速创建一个用于防止AI技能的代码仓库 |
+| `remote` | 运维 | 远程访问 Linux 服务器，复用本地保存的服务器信息，并通过 `sshpass` 执行单条或并行命令 |
 
 
 - 添加单个Skill
 
 ```bash 
 npx skills add https://github.com/karthrand/karthrand-ai-public.git --skill mindmap
+```
+
+- 安装 `remote` Skill
+
+```bash
+npx skills add https://github.com/karthrand/karthrand-ai-public.git --skill remote
 ```
 
 ## 目录结构

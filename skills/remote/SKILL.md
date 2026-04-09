@@ -7,7 +7,7 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 
 ## 概述
 
-用于通过 `sshpass` 远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。默认复用已保存的服务器记录，首次访问或登录失败后再向用户追问。
+用于通过 `sshpass` 远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。默认先看 `bootstrap-state.json` 与 `servers.json`，再决定是否需要补充 setup 或连接信息。
 
 ## 何时使用
 
@@ -19,13 +19,18 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 
 ## 核心流程
 
-1. 先检查本地状态目录中的 `servers.json` 是否已有目标服务器记录。
-2. 命中记录时，直接复用保存的地址、端口、用户名和密码。
-3. 未命中记录时，立即向用户询问服务器地址、用户名、密码；端口默认 `22`，只有用户显式修改时才覆盖。
-4. 首次使用、状态文件缺失、`sshpass` 不可用或环境异常时，读取 `references/setup.md` 并执行对应平台 setup。
-5. 远程执行统一走 `scripts/remote.sh`；Windows 下必须通过 `scripts/remote.ps1` 调用。只有手工直连时，才允许使用带 `REMOTE_BASH_LC=1` 的 `bash -lc` 调用 `scripts/remote.sh`。
-6. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
-7. 连接成功后更新 `servers.json`；若连接失败，立即要求用户确认或修改连接信息，再只重试一次。
+1. 先检查本地状态目录中的 `bootstrap-state.json`。
+2. 若状态文件显示当前运行时对应的 `sshpass` 已可用，直接进入理解用户需求阶段。
+3. 若状态文件缺失、显示未安装，或与当前运行时不一致，再按真实环境复核 `sshpass`；仍不可用时才执行 setup。
+4. 再检查 `servers.json` 是否已有目标服务器记录。
+5. 命中记录时，直接复用保存的地址、端口、用户名和密码。
+6. 未命中记录时，立即向用户询问服务器地址、用户名、密码；端口默认 `22`，只有用户显式修改时才覆盖。
+7. 远程执行统一走 `scripts/remote.sh`；Windows 下必须通过 `scripts/remote.ps1` 调用。只有手工直连时，才允许使用带 `REMOTE_BASH_LC=1` 的 `bash -lc` 调用 `scripts/remote.sh`。
+8. Windows 下 `remote.ps1` 会先识别当前 `bash` 运行时：
+   - 命中 `WSL` 时，setup 与执行都使用 WSL 内的 Linux `sshpass`
+   - 命中 `MSYS/Git Bash` 时，setup 与执行都使用 Windows `sshpass-win32`
+9. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
+10. 连接成功后更新 `servers.json`；若连接失败，立即要求用户确认或修改连接信息，再只重试一次。
 
 ## 按需继续加载
 
