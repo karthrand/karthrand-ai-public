@@ -11,6 +11,225 @@ function Quote-BashArg {
     return "'" + ($Value -replace "'", "'""'""'") + "'"
 }
 
+function Parse-InvocationArguments {
+    param([string[]]$RawArgs)
+
+    $parsed = [ordered]@{
+        Save          = $false
+        Show          = $false
+        Parallel      = $false
+        Verbose       = $false
+        Address       = $null
+        Port          = $null
+        Username      = $null
+        Password      = $null
+        Command       = $null
+        Commands      = New-Object System.Collections.Generic.List[string]
+        Passthrough   = $false
+        PassthroughArgs = New-Object System.Collections.Generic.List[string]
+    }
+
+    $knownShortArgs = @(
+        '-Save', '-Show', '-Parallel', '-Verbose',
+        '-Address', '-Port', '-Username', '-Password',
+        '-Command', '-Commands'
+    )
+
+    for ($index = 0; $index -lt $RawArgs.Length; $index++) {
+        $token = [string]$RawArgs[$index]
+
+        if ($token.StartsWith('--')) {
+            $parsed.Passthrough = $true
+            break
+        }
+
+        if ($token.StartsWith('-') -and -not $knownShortArgs.Contains($token)) {
+            $parsed.Passthrough = $true
+            break
+        }
+
+        switch ($token) {
+            '-Save' {
+                $parsed.Save = $true
+            }
+            '-Show' {
+                $parsed.Show = $true
+            }
+            '-Parallel' {
+                $parsed.Parallel = $true
+            }
+            '-Verbose' {
+                $parsed.Verbose = $true
+            }
+            '-Address' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Address 缺少值。"
+                }
+                $parsed.Address = [string]$RawArgs[$index]
+            }
+            '-Port' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Port 缺少值。"
+                }
+                $parsed.Port = [string]$RawArgs[$index]
+            }
+            '-Username' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Username 缺少值。"
+                }
+                $parsed.Username = [string]$RawArgs[$index]
+            }
+            '-Password' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Password 缺少值。"
+                }
+                $parsed.Password = [string]$RawArgs[$index]
+            }
+            '-Command' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Command 缺少值。"
+                }
+                $parsed.Command = [string]$RawArgs[$index]
+            }
+            '-Commands' {
+                $index++
+                if ($index -ge $RawArgs.Length) {
+                    throw "参数 -Commands 至少需要一条命令。"
+                }
+
+                while ($index -lt $RawArgs.Length) {
+                    $value = [string]$RawArgs[$index]
+                    if ($value.StartsWith('-')) {
+                        $index--
+                        break
+                    }
+
+                    $parsed.Commands.Add($value)
+                    $index++
+                }
+
+                if ($parsed.Commands.Count -eq 0) {
+                    throw "参数 -Commands 至少需要一条命令。"
+                }
+            }
+            default {
+                $parsed.Passthrough = $true
+                break
+            }
+        }
+    }
+
+    if ($parsed.Passthrough) {
+        foreach ($arg in $RawArgs) {
+            $parsed.PassthroughArgs.Add([string]$arg)
+        }
+    }
+
+    return $parsed
+}
+
+function Build-RemoteShArgs {
+    param($ParsedArgs)
+
+    if ($ParsedArgs.Passthrough) {
+        return ,$ParsedArgs.PassthroughArgs.ToArray()
+    }
+
+    $hasModeCount = 0
+    foreach ($enabled in @($ParsedArgs.Save, $ParsedArgs.Show, $ParsedArgs.Parallel)) {
+        if ($enabled) {
+            $hasModeCount++
+        }
+    }
+    if ($hasModeCount -gt 1) {
+        throw "-Save、-Show、-Parallel 只能选择一种。"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ParsedArgs.Address)) {
+        throw "请提供 -Address。"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Port)) {
+        if ($ParsedArgs.Port -notmatch '^[0-9]+$') {
+            throw "-Port 必须是数字。"
+        }
+    }
+
+    $translated = New-Object System.Collections.Generic.List[string]
+
+    if ($ParsedArgs.Save) {
+        if ([string]::IsNullOrWhiteSpace($ParsedArgs.Username) -or [string]::IsNullOrWhiteSpace($ParsedArgs.Password)) {
+            throw "-Save 必须同时提供 -Username 和 -Password。"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command) -or $ParsedArgs.Commands.Count -gt 0) {
+            throw "-Save 不允许同时提供 -Command 或 -Commands。"
+        }
+
+        $translated.Add("--save")
+    } elseif ($ParsedArgs.Show) {
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Username) -or -not [string]::IsNullOrWhiteSpace($ParsedArgs.Password)) {
+            throw "-Show 不需要 -Username 或 -Password。"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command) -or $ParsedArgs.Commands.Count -gt 0) {
+            throw "-Show 不允许同时提供 -Command 或 -Commands。"
+        }
+
+        $translated.Add("--show")
+    } elseif ($ParsedArgs.Parallel) {
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
+            throw "-Parallel 模式下请只使用 -Commands。"
+        }
+        if ($ParsedArgs.Commands.Count -eq 0) {
+            throw "-Parallel 模式下必须提供 -Commands。"
+        }
+
+        $translated.Add("--parallel")
+        if ($ParsedArgs.Verbose) {
+            $translated.Add("--verbose")
+        }
+    } else {
+        if ($ParsedArgs.Commands.Count -gt 0) {
+            throw "非并行模式下请使用 -Command，而不是 -Commands。"
+        }
+        if ([string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
+            throw "请提供 -Command，或改用旧版透传参数。"
+        }
+        if ($ParsedArgs.Verbose) {
+            throw "-Verbose 仅在 -Parallel 模式下可用。"
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Port)) {
+        $translated.Add("--port")
+        $translated.Add($ParsedArgs.Port)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Username)) {
+        $translated.Add("--user")
+        $translated.Add($ParsedArgs.Username)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Password)) {
+        $translated.Add("--password")
+        $translated.Add($ParsedArgs.Password)
+    }
+
+    $translated.Add($ParsedArgs.Address)
+
+    if ($ParsedArgs.Parallel) {
+        foreach ($command in $ParsedArgs.Commands) {
+            $translated.Add($command)
+        }
+    } elseif (-not $ParsedArgs.Save -and -not $ParsedArgs.Show) {
+        $translated.Add($ParsedArgs.Command)
+    }
+
+    return ,$translated.ToArray()
+}
+
 function Get-BashCommand {
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($null -eq $bash) {
@@ -41,6 +260,9 @@ try {
         throw "当前执行环境不受支持：$runtimeType"
     }
 
+    $parsedArgs = Parse-InvocationArguments -RawArgs $args
+    $remoteShArgs = Build-RemoteShArgs -ParsedArgs $parsedArgs
+
     $quoted = New-Object System.Collections.Generic.List[string]
     $quoted.Add("REMOTE_BASH_LC=1")
     $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
@@ -49,7 +271,7 @@ try {
         $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
     }
     $quoted.Add((Quote-BashArg -Value "./remote.sh"))
-    foreach ($arg in $args) {
+    foreach ($arg in $remoteShArgs) {
         $quoted.Add((Quote-BashArg -Value ([string]$arg)))
     }
 

@@ -109,6 +109,24 @@ current_bash_available() {
   fi
 }
 
+current_ssh_path() {
+  if has_cmd ssh; then
+    command -v ssh
+    return 0
+  fi
+
+  printf '\n'
+}
+
+current_sshpass_path() {
+  if has_cmd sshpass; then
+    command -v sshpass
+    return 0
+  fi
+
+  printf '\n'
+}
+
 current_sshpass_provider() {
   remote_detect_sshpass_provider
 }
@@ -201,7 +219,7 @@ state_file = Path(os.environ["BOOTSTRAP_STATE_FILE"])
 if not state_file.exists():
     raise SystemExit(3)
 
-payload = json.loads(state_file.read_text(encoding="utf-8"))
+payload = json.loads(state_file.read_text(encoding="utf-8-sig"))
 print(json.dumps(payload, ensure_ascii=False))
 PY
   )"; then
@@ -282,7 +300,7 @@ state_dir.mkdir(parents=True, exist_ok=True)
 now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 if state_file.exists():
-    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    payload = json.loads(state_file.read_text(encoding="utf-8-sig"))
 else:
     payload = {"skill_name": "remote"}
 
@@ -385,7 +403,7 @@ state_file = Path(os.environ["SERVERS_STATE_FILE"])
 state_dir.mkdir(parents=True, exist_ok=True)
 
 if state_file.exists():
-    data = json.loads(state_file.read_text(encoding="utf-8"))
+    data = json.loads(state_file.read_text(encoding="utf-8-sig"))
 else:
     data = {"skill_name": "remote", "updated_at": "", "servers": []}
 
@@ -436,7 +454,7 @@ state_file = Path(os.environ["SERVERS_STATE_FILE"])
 if not state_file.exists():
     raise SystemExit(3)
 
-data = json.loads(state_file.read_text(encoding="utf-8"))
+data = json.loads(state_file.read_text(encoding="utf-8-sig"))
 server_id = f'{os.environ["ADDRESS"]}:{int(os.environ["PORT"])}'
 for item in data.get("servers", []):
     if item.get("server_id") == server_id:
@@ -464,7 +482,7 @@ state_file = Path(os.environ["SERVERS_STATE_FILE"])
 if not state_file.exists():
     raise SystemExit(3)
 
-data = json.loads(state_file.read_text(encoding="utf-8"))
+data = json.loads(state_file.read_text(encoding="utf-8-sig"))
 server_id = f'{os.environ["ADDRESS"]}:{int(os.environ["PORT"])}'
 for item in data.get("servers", []):
     if item.get("server_id") == server_id:
@@ -532,12 +550,44 @@ ssh_common_args() {
     "-o" "ConnectTimeout=10" \
     "-o" "ServerAliveInterval=30" \
     "-o" "ServerAliveCountMax=3" \
+    "-o" "NumberOfPasswordPrompts=1" \
     "-o" "PreferredAuthentications=password,keyboard-interactive" \
     "-o" "PubkeyAuthentication=no" \
     "-o" "StrictHostKeyChecking=no" \
     "-o" "UserKnownHostsFile=/dev/null" \
     "-o" "LogLevel=ERROR" \
     "-p" "$CONNECTION_PORT"
+}
+
+append_client_diagnostics() {
+  local stderr_file="$1"
+
+  if [ "$VERBOSE" -ne 1 ]; then
+    return 0
+  fi
+
+  {
+    printf 'Client diagnostics:\n'
+    printf 'runtime_type=%s\n' "$(current_runtime_type)"
+    printf 'sshpass_path=%s\n' "$(current_sshpass_path)"
+    printf 'ssh_path=%s\n' "$(current_ssh_path)"
+  } >>"$stderr_file"
+}
+
+run_noninteractive_sshpass() {
+  if [ "$(current_runtime_type)" = "windows-msys" ]; then
+    env \
+      GIT_ASKPASS= \
+      SSH_ASKPASS= \
+      SSH_ASKPASS_REQUIRE=never \
+      DISPLAY= \
+      WAYLAND_DISPLAY= \
+      GCM_INTERACTIVE=never \
+      sshpass "$@"
+    return $?
+  fi
+
+  sshpass "$@"
 }
 
 run_remote_command() {
@@ -549,7 +599,8 @@ run_remote_command() {
     ssh_args+=("$line")
   done < <(ssh_common_args)
 
-  sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>"$stderr_file"
+  append_client_diagnostics "$stderr_file"
+  run_noninteractive_sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
 }
 
 update_bootstrap_verified_at() {
@@ -593,6 +644,14 @@ render_failure_diagnosis() {
     printf '证据: SSH 返回 Connection refused。\n'
     printf '推断: 可能是 SSH 服务未监听目标端口，或中间链路转发配置不正确。\n'
     printf '下一步: 先核对端口与 SSH 服务状态。\n'
+    return 0
+  fi
+
+  if printf '%s' "$stderr_text" | grep -qi 'askpass'; then
+    printf '结论: 本地 SSH 交互链路未被正确抑制。\n'
+    printf '证据: SSH/Askpass 输出包含 askpass 相关提示。\n'
+    printf '推断: 当前环境可能把 Git for Windows 或其他 askpass 程序注入到了 SSH 调用链路。\n'
+    printf '下一步: 只通过 remote 标准主链修复本地非交互执行环境，不要手工输入密码或切换到裸 sshpass。\n'
     return 0
   fi
 

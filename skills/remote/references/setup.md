@@ -41,6 +41,7 @@ agent 不要靠口头约定或手工判断环境；必须复用标准脚本内�
 setup 成功后写入：
 
 - `bootstrap-state.json`
+- Windows 写入必须使用无 BOM UTF-8；读取端需要兼容历史 BOM 文件
 
 ## 检测方式
 

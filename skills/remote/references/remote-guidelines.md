@@ -24,8 +24,13 @@
 Windows 示例：
 
 ```powershell
-.\skills\remote\scripts\remote.ps1 --user root --password "secret" "10.0.0.8" "hostname && whoami"
+.\skills\remote\scripts\remote.ps1 -Address "10.0.0.8" -Username root -Password "secret" -Command "hostname && whoami"
 ```
+
+补充要求：
+
+- `windows-msys` 下必须保持纯非交互，不允许弹出 Git for Windows 或其他 askpass 密码窗口
+- 凭据无效时应直接返回失败诊断，不能依赖人工输入密码继续执行
 
 ### 并行多命令
 

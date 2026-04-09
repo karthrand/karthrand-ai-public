@@ -28,6 +28,16 @@ function Get-BootstrapStateFile {
     return Join-Path (Get-StateDir) "bootstrap-state.json"
 }
 
+function Write-Utf8NoBomFile {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
 function Get-BashCommand {
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($null -eq $bash) {
@@ -168,7 +178,8 @@ function Write-BootstrapState {
         last_verified_at     = $now
     }
 
-    $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $stateFile -Encoding UTF8
+    $json = $payload | ConvertTo-Json -Depth 4
+    Write-Utf8NoBomFile -Path $stateFile -Content $json
 }
 
 $bash = Get-BashCommand

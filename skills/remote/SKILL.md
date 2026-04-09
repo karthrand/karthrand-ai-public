@@ -25,9 +25,11 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 4. 标准入口固定如下：
    - `windows-msys`：通过 `scripts/remote.ps1` 与 `scripts/setup.ps1`
    - `linux-wsl`、`linux-native`、`macos-native`：通过 `scripts/remote.sh` 与 `scripts/setup.sh`
+   - Windows 推荐优先使用 `remote.ps1` 的 PowerShell 命名参数：`-Address`、`-Port`、`-Username`、`-Password`、`-Command`、`-Commands`、`-Save`、`-Show`、`-Parallel`
 5. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
 6. 连接成功后更新 `servers.json`；连接失败时按“结论 / 证据 / 推断 / 下一步”输出，最多只允许一次基于标准主链的最小重试。
 7. 远端返回 `Permission denied` 时，只能下结论为“密码认证被拒绝”；不能直接解释为密码中的特殊字符、`sshpass` 参数问题或兼容性问题。
+8. `windows-msys` 下远程执行必须是纯非交互；若凭据错误，应直接失败，不能弹出 Git for Windows 或其他 askpass 窗口。
 
 ## 按需继续加载
 
@@ -44,3 +46,4 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 - 诊断类回答按“结论 / 证据 / 推断 / 下一步”输出
 - 不要在失败后依次试错 `sshpass -k`、`sshpass -e`、`sshpass -p`
 - 不默认执行高风险命令；涉及写操作、重启、删除、停止服务时必须先征求用户确认
+- 本地状态文件统一按无 BOM UTF-8 写入；读取时兼容历史 BOM 文件，不能因编码头导致主链中断

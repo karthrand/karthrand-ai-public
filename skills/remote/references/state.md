@@ -32,6 +32,7 @@
 
 - 只表达安装与验证结果
 - 不保存服务器业务数据
+- 文件编码统一为无 BOM UTF-8；读取端需要兼容历史 BOM 文件
 - `sshpass_version` 允许为 `"unknown"`
 - `runtime_type` 允许值：
   - `windows-msys`
@@ -83,6 +84,7 @@
 
 - `server_id` 固定使用 `address:port`
 - 端口默认 `22`
+- 文件编码统一为无 BOM UTF-8；读取端需要兼容历史 BOM 文件
 - 用户修改任一服务器信息后，立即更新本地记录
 - 登录失败后，允许把失败信息写入 `last_error`
 - 本 skill 属于内部 skill，允许在宿主本地状态目录明文保存密码

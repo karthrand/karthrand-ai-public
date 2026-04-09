@@ -70,9 +70,20 @@ bash ./skills/remote/scripts/setup.sh
 Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部先按 `scripts/runtime.sh` 判定当前执行环境，再转发到 `bash -lc`：
 
 ```powershell
-.\skills\remote\scripts\remote.ps1 --save "10.0.0.8" --user root --password "secret"
-.\skills\remote\scripts\remote.ps1 --user root --password "secret" "10.0.0.8" "hostname && whoami"
+.\skills\remote\scripts\remote.ps1 -Save -Address "10.0.0.8" -Username root -Password "secret"
+.\skills\remote\scripts\remote.ps1 -Address "10.0.0.8" -Username root -Password "secret" -Command "hostname && whoami"
+.\skills\remote\scripts\remote.ps1 -Parallel -Address "10.0.0.8" -Commands "uptime" "free -h" "df -h"
 ```
+
+兼容旧版透传调用：
+
+```powershell
+.\skills\remote\scripts\remote.ps1 --save "10.0.0.8" --user root --password "secret"
+.\skills\remote\scripts\remote.ps1 "10.0.0.8" "hostname && whoami"
+```
+
+状态文件统一使用无 BOM 的 UTF-8 写入；读取端兼容历史 UTF-8 BOM 文件。
+`windows-msys` 下远程执行必须保持纯非交互；凭据错误时应直接失败，不允许弹出 Git for Windows 或其他 askpass 密码窗口。
 
 如果手工执行，也只能显式使用：
 
@@ -84,6 +95,7 @@ bash -lc 'REMOTE_BASH_LC=1 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostnam
 
 - 在 PowerShell 中裸跑 `sshpass ... ssh ...`
 - 在 Windows 下直接执行 `remote.sh`
+- 在 `windows-msys` 下接受 Git for Windows 或其他 askpass 弹窗并手工输入密码
 - 在连接失败后手工切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
 
 ### macOS / Linux
