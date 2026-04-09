@@ -5,7 +5,12 @@ DEFAULT_PORT=22
 VERBOSE=0
 PARALLEL=0
 ACTION="run"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
+
+# 统一执行环境判定逻辑，避免多个脚本各写一套。
+# shellcheck source=./runtime.sh
+source "${SCRIPT_DIR}/runtime.sh"
 
 log() {
   printf '[remote] %s\n' "$*"
@@ -26,32 +31,8 @@ has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-is_windows_env() {
-  local uname_out
-  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
-  case "$uname_out" in
-    MINGW*|MSYS*|CYGWIN*)
-      return 0
-      ;;
-  esac
-
-  if [ "${OS:-}" = "Windows_NT" ] || [ -n "${WINDIR:-}" ] || [ -n "${LOCALAPPDATA:-}" ]; then
-    return 0
-  fi
-
-  return 1
-}
-
-is_wsl_env() {
-  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
-    return 0
-  fi
-
-  if [ -r /proc/version ] && grep -qi 'microsoft' /proc/version; then
-    return 0
-  fi
-
-  return 1
+current_runtime_type() {
+  remote_detect_runtime_type
 }
 
 convert_windows_path() {
@@ -74,7 +55,7 @@ convert_windows_path() {
 }
 
 ensure_windows_bash_lc() {
-  if ! is_windows_env && ! is_wsl_env; then
+  if [ "$(current_runtime_type)" != "windows-msys" ]; then
     return 0
   fi
 
@@ -82,7 +63,7 @@ ensure_windows_bash_lc() {
     return 0
   fi
 
-  log "Windows / WSL 宿主下必须通过 bash -lc 调用 ${SCRIPT_NAME}。在 PowerShell 中请改用 skills/remote/scripts/remote.ps1。"
+  log "windows-msys 执行环境下必须通过 bash -lc 调用 ${SCRIPT_NAME}。在 PowerShell 中请改用 skills/remote/scripts/remote.ps1。"
   exit 12
 }
 
@@ -99,55 +80,11 @@ python_cmd() {
 }
 
 current_host_os() {
-  if [ -n "${REMOTE_HOST_OS:-}" ]; then
-    printf '%s\n' "$REMOTE_HOST_OS"
-    return 0
-  fi
-
-  local uname_out
-  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
-  case "$uname_out" in
-    Darwin)
-      printf 'darwin\n'
-      ;;
-    Linux)
-      printf 'linux\n'
-      ;;
-    MINGW*|MSYS*|CYGWIN*)
-      printf 'windows\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+  remote_detect_host_os
 }
 
 current_bash_flavor() {
-  if [ -n "${REMOTE_HOST_BASH_FLAVOR:-}" ]; then
-    printf '%s\n' "$REMOTE_HOST_BASH_FLAVOR"
-    return 0
-  fi
-
-  local uname_out
-  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
-  case "$uname_out" in
-    MINGW*|MSYS*|CYGWIN*)
-      printf 'msys\n'
-      ;;
-    Linux)
-      if is_wsl_env; then
-        printf 'wsl\n'
-      else
-        printf 'native\n'
-      fi
-      ;;
-    Darwin)
-      printf 'native\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+  remote_detect_bash_flavor
 }
 
 current_bash_path() {
@@ -173,21 +110,11 @@ current_bash_available() {
 }
 
 current_sshpass_provider() {
-  case "$(current_bash_flavor)" in
-    msys)
-      printf 'windows\n'
-      ;;
-    wsl|native)
-      printf 'linux\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+  remote_detect_sshpass_provider
 }
 
 current_windows_remote_ready() {
-  if [ "$(current_host_os)" = "windows" ] && [ "${REMOTE_BASH_LC:-}" = "1" ] && [ "$(current_bash_flavor)" != "unknown" ]; then
+  if [ "$(current_runtime_type)" = "windows-msys" ] && [ "${REMOTE_BASH_LC:-}" = "1" ]; then
     printf 'true\n'
   else
     printf 'false\n'
@@ -195,6 +122,7 @@ current_windows_remote_ready() {
 }
 
 refresh_runtime_context() {
+  CURRENT_RUNTIME_TYPE="$(current_runtime_type)"
   CURRENT_HOST_OS="$(current_host_os)"
   CURRENT_BASH_FLAVOR="$(current_bash_flavor)"
   CURRENT_BASH_PATH="$(current_bash_path)"
@@ -205,7 +133,7 @@ refresh_runtime_context() {
 
 state_dir() {
   local base_path
-  base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-${LOCALAPPDATA:-}}"
+  base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-}"
   if [ -n "$base_path" ]; then
     printf '%s/remote\n' "$(convert_windows_path "$base_path")"
     return 0
@@ -299,7 +227,12 @@ PY
 }
 
 bootstrap_matches_runtime() {
-  local saved_bash_path
+  local saved_bash_path saved_runtime_type
+
+  saved_runtime_type="$(read_bootstrap_field runtime_type)"
+  if [ -n "$saved_runtime_type" ]; then
+    [ "$saved_runtime_type" = "$CURRENT_RUNTIME_TYPE" ] || return 1
+  fi
 
   [ "$(read_bootstrap_field os_type)" = "$CURRENT_HOST_OS" ] || return 1
   [ "$(read_bootstrap_field bash_available)" = "$CURRENT_BASH_AVAILABLE" ] || return 1
@@ -331,6 +264,7 @@ write_bootstrap_state() {
   VERSION="$version" \
   TOUCH_SETUP="$touch_setup" \
   CURRENT_HOST_OS="$CURRENT_HOST_OS" \
+  CURRENT_RUNTIME_TYPE="$CURRENT_RUNTIME_TYPE" \
   CURRENT_BASH_AVAILABLE="$CURRENT_BASH_AVAILABLE" \
   CURRENT_BASH_FLAVOR="$CURRENT_BASH_FLAVOR" \
   CURRENT_BASH_PATH="$CURRENT_BASH_PATH" \
@@ -356,6 +290,7 @@ payload["skill_name"] = "remote"
 payload["sshpass_installed"] = os.environ["INSTALLED"] == "true"
 payload["sshpass_version"] = os.environ["VERSION"]
 payload["os_type"] = os.environ["CURRENT_HOST_OS"]
+payload["runtime_type"] = os.environ["CURRENT_RUNTIME_TYPE"]
 payload["bash_available"] = os.environ["CURRENT_BASH_AVAILABLE"] == "true"
 payload["bash_flavor"] = os.environ["CURRENT_BASH_FLAVOR"]
 payload["bash_path"] = os.environ["CURRENT_BASH_PATH"]
@@ -597,6 +532,8 @@ ssh_common_args() {
     "-o" "ConnectTimeout=10" \
     "-o" "ServerAliveInterval=30" \
     "-o" "ServerAliveCountMax=3" \
+    "-o" "PreferredAuthentications=password,keyboard-interactive" \
+    "-o" "PubkeyAuthentication=no" \
     "-o" "StrictHostKeyChecking=no" \
     "-o" "UserKnownHostsFile=/dev/null" \
     "-o" "LogLevel=ERROR" \
@@ -622,6 +559,47 @@ update_bootstrap_verified_at() {
   fi
 
   write_bootstrap_state "true" "$version" "false"
+}
+
+render_failure_diagnosis() {
+  local stderr_file="$1"
+
+  if [ ! -s "$stderr_file" ]; then
+    return 0
+  fi
+
+  local stderr_text
+  stderr_text="$(cat "$stderr_file")"
+
+  printf 'Diagnosis:\n'
+  if printf '%s' "$stderr_text" | grep -qi 'Permission denied'; then
+    printf '结论: 远端拒绝了密码认证。\n'
+    printf '证据: SSH 返回 Permission denied。\n'
+    printf '推断: 可能是用户名、密码或服务端认证策略问题；不能仅凭当前输出判断为特殊字符转义或 sshpass 兼容性问题。\n'
+    printf '下一步: 先核对账号密码与 SSH 密码登录策略；若需重试，只通过 remote 标准主链再做一次最小验证。\n'
+    return 0
+  fi
+
+  if printf '%s' "$stderr_text" | grep -qi 'Connection timed out\|Operation timed out'; then
+    printf '结论: SSH 连接超时。\n'
+    printf '证据: SSH 返回 timed out。\n'
+    printf '推断: 可能是网络不通、端口不可达或目标主机响应慢。\n'
+    printf '下一步: 先核对地址、端口和网络连通性，再决定是否继续诊断。\n'
+    return 0
+  fi
+
+  if printf '%s' "$stderr_text" | grep -qi 'Connection refused'; then
+    printf '结论: 目标主机拒绝了 SSH 连接。\n'
+    printf '证据: SSH 返回 Connection refused。\n'
+    printf '推断: 可能是 SSH 服务未监听目标端口，或中间链路转发配置不正确。\n'
+    printf '下一步: 先核对端口与 SSH 服务状态。\n'
+    return 0
+  fi
+
+  printf '结论: 远程命令执行失败。\n'
+  printf '证据: 请查看上方 Error 输出。\n'
+  printf '推断: 当前证据不足，不能直接归因为密码特殊字符、sshpass 参数或兼容性问题。\n'
+  printf '下一步: 保持标准主链，基于错误输出继续定位。\n'
 }
 
 render_single_result() {
@@ -650,6 +628,7 @@ render_single_result() {
     printf '结果: 成功\n'
   else
     printf '结果: 失败 (rc=%s)\n' "$rc"
+    render_failure_diagnosis "$stderr_file"
   fi
   printf 'Duration: %ss\n' "$duration"
 }

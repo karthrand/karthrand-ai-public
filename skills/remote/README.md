@@ -20,6 +20,7 @@ skills/remote/
 └── scripts/
     ├── remote.ps1
     ├── remote.sh
+    ├── runtime.sh
     ├── setup.ps1
     └── setup.sh
 ```
@@ -36,6 +37,15 @@ skills/remote/
 
 ## setup
 
+`remote` 不做 code agent 探测，只做执行环境判定。标准执行环境只有四种：
+
+- `windows-msys`
+- `linux-wsl`
+- `linux-native`
+- `macos-native`
+
+其中 `linux-wsl` 直接按 Linux 分支处理。具体判定方法、成功标准和修复边界统一见 `references/setup.md`。
+
 ### Windows
 
 先执行：
@@ -44,10 +54,8 @@ skills/remote/
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 ```
 
-`setup.ps1` 会先识别当前 `bash` 运行时：
-
-- 命中 `WSL` 时，转到 `setup.sh`，在 WSL 内安装 Linux `sshpass`
-- 命中 `MSYS/Git Bash` 时，安装 `sshpass-win32`
+- `windows-msys` 直接安装 `sshpass-win32`
+- `linux-wsl` 由 `setup.ps1` 转发到 `setup.sh`
 
 ### macOS / Linux
 
@@ -55,16 +63,11 @@ powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 bash ./skills/remote/scripts/setup.sh
 ```
 
-验证方式不再只依赖 `sshpass -V`。统一规则是：
-
-- 命令存在
-- `sshpass -V` 或 `sshpass -h` 至少一种可识别
-
 ## 远程执行
 
 ### Windows
 
-Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部固定转发到 `bash -lc`，并把当前运行时标记成 `wsl` 或 `msys`：
+Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部先按 `scripts/runtime.sh` 判定当前执行环境，再转发到 `bash -lc`：
 
 ```powershell
 .\skills\remote\scripts\remote.ps1 --save "10.0.0.8" --user root --password "secret"
@@ -81,6 +84,7 @@ bash -lc 'REMOTE_BASH_LC=1 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostnam
 
 - 在 PowerShell 中裸跑 `sshpass ... ssh ...`
 - 在 Windows 下直接执行 `remote.sh`
+- 在连接失败后手工切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
 
 ### macOS / Linux
 
@@ -110,3 +114,4 @@ bash -lc 'REMOTE_BASH_LC=1 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostnam
 - 默认不做批量改动、重启、删除、停服务
 - 诊断类任务首轮不应先用 `grep/head/tail` 过滤
 - 多维采集优先并行执行
+- 认证失败时只能先报告“远端拒绝了密码认证”，不能直接归因为密码特殊字符或兼容性问题

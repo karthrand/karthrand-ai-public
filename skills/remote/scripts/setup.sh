@@ -3,6 +3,11 @@ set -euo pipefail
 
 STATE_SKILL_NAME="remote"
 FORCE=0
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 统一执行环境判定逻辑，避免 setup 和执行脚本各自维护一套判断。
+# shellcheck source=./runtime.sh
+source "${SCRIPT_DIR}/runtime.sh"
 
 log() {
   printf '[remote/setup] %s\n' "$*"
@@ -44,7 +49,7 @@ convert_windows_path() {
 }
 
 state_dir() {
-  local base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-${LOCALAPPDATA:-}}"
+  local base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-}"
   if [ -n "$base_path" ]; then
     printf '%s/%s\n' "$(convert_windows_path "$base_path")" "$STATE_SKILL_NAME"
     return 0
@@ -63,48 +68,15 @@ bootstrap_state_file() {
 }
 
 current_host_os() {
-  if [ -n "${REMOTE_HOST_OS:-}" ]; then
-    printf '%s\n' "$REMOTE_HOST_OS"
-    return 0
-  fi
+  remote_detect_host_os
+}
 
-  local uname_out
-  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
-  case "$uname_out" in
-    Darwin)
-      printf 'darwin\n'
-      ;;
-    Linux)
-      printf 'linux\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+current_runtime_type() {
+  remote_detect_runtime_type
 }
 
 current_bash_flavor() {
-  if [ -n "${REMOTE_HOST_BASH_FLAVOR:-}" ]; then
-    printf '%s\n' "$REMOTE_HOST_BASH_FLAVOR"
-    return 0
-  fi
-
-  local uname_out
-  uname_out="$(uname -s 2>/dev/null || printf 'unknown')"
-  case "$uname_out" in
-    MINGW*|MSYS*|CYGWIN*)
-      printf 'msys\n'
-      ;;
-    Linux)
-      printf 'native\n'
-      ;;
-    Darwin)
-      printf 'native\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+  remote_detect_bash_flavor
 }
 
 current_bash_path() {
@@ -122,17 +94,7 @@ current_bash_path() {
 }
 
 current_sshpass_provider() {
-  case "$(current_bash_flavor)" in
-    msys)
-      printf 'windows\n'
-      ;;
-    wsl|native)
-      printf 'linux\n'
-      ;;
-    *)
-      printf 'unknown\n'
-      ;;
-  esac
+  remote_detect_sshpass_provider
 }
 
 extract_version_from_text() {
@@ -183,6 +145,7 @@ write_bootstrap_state() {
   SSHPASS_INSTALLED="$installed" \
   SSHPASS_VERSION="$version" \
   CURRENT_HOST_OS="$(current_host_os)" \
+  CURRENT_RUNTIME_TYPE="$(current_runtime_type)" \
   CURRENT_BASH_FLAVOR="$(current_bash_flavor)" \
   CURRENT_BASH_PATH="$(current_bash_path)" \
   CURRENT_SSHPASS_PROVIDER="$(current_sshpass_provider)" \
@@ -202,6 +165,7 @@ payload = {
     "sshpass_installed": os.environ["SSHPASS_INSTALLED"] == "true",
     "sshpass_version": os.environ["SSHPASS_VERSION"],
     "os_type": os.environ["CURRENT_HOST_OS"],
+    "runtime_type": os.environ["CURRENT_RUNTIME_TYPE"],
     "bash_available": True,
     "bash_flavor": os.environ["CURRENT_BASH_FLAVOR"],
     "bash_path": os.environ["CURRENT_BASH_PATH"],
@@ -280,28 +244,25 @@ main() {
     esac
   done
 
-  local host_os flavor uname_out
-  host_os="$(current_host_os)"
-  flavor="$(current_bash_flavor)"
-  uname_out="$(uname -s)"
-
-  if [ "$flavor" = "msys" ]; then
-    log "Windows 下请改用 powershell 执行 scripts/setup.ps1。"
-    exit 1
-  fi
+  local runtime_type
+  runtime_type="$(current_runtime_type)"
 
   if [ "$FORCE" -eq 0 ] && probe_sshpass; then
     log "检测到 sshpass，跳过安装。"
   else
-    case "$uname_out" in
-      Darwin)
+    case "$runtime_type" in
+      windows-msys)
+        log "windows-msys 执行环境下请改用 powershell 执行 scripts/setup.ps1。"
+        exit 1
+        ;;
+      macos-native)
         install_macos
         ;;
-      Linux)
+      linux-wsl|linux-native)
         install_linux
         ;;
       *)
-        log "不支持的系统：$uname_out"
+        log "未识别到受支持的执行环境：$runtime_type"
         exit 1
         ;;
     esac
@@ -314,11 +275,7 @@ main() {
   fi
 
   write_bootstrap_state "true" "$PROBED_SSHPASS_VERSION"
-  if [ "$host_os" = "windows" ]; then
-    log "sshpass 已完成验证，状态文件已写入 $(bootstrap_state_file)。当前 provider 为 linux。"
-  else
-    log "sshpass 已完成验证，状态文件已写入 $(bootstrap_state_file)"
-  fi
+  log "sshpass 已完成验证，状态文件已写入 $(bootstrap_state_file)。当前执行环境：$runtime_type。"
 }
 
 main "$@"

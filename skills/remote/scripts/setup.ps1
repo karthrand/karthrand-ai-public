@@ -37,21 +37,39 @@ function Get-BashCommand {
     return $bash
 }
 
-function Get-BashFlavor {
+function Get-RuntimeType {
     param([string]$BashPath)
 
-    $unameShort = (& $BashPath -lc "uname -s").Trim()
-    $unameLong = (& $BashPath -lc "uname -a").Trim()
-
-    if ($unameShort -match '^(MINGW|MSYS|CYGWIN)') {
-        return "msys"
+    $runtimeType = (& $BashPath -lc "source ./runtime.sh; remote_detect_runtime_type").Trim()
+    if ([string]::IsNullOrWhiteSpace($runtimeType) -or $runtimeType -eq "unknown") {
+        throw "未识别到当前执行环境，无法安全完成 remote setup。"
     }
 
-    if ($unameLong -match '(?i)microsoft|wsl') {
-        return "wsl"
-    }
+    return $runtimeType
+}
 
-    return "unknown"
+function Get-HostOsForRuntime {
+    param([string]$RuntimeType)
+
+    switch ($RuntimeType) {
+        "windows-msys" { return "windows" }
+        "linux-wsl" { return "linux" }
+        "linux-native" { return "linux" }
+        "macos-native" { return "macos" }
+        default { return "unknown" }
+    }
+}
+
+function Get-BashFlavorForRuntime {
+    param([string]$RuntimeType)
+
+    switch ($RuntimeType) {
+        "windows-msys" { return "msys" }
+        "linux-wsl" { return "wsl" }
+        "linux-native" { return "native" }
+        "macos-native" { return "native" }
+        default { return "unknown" }
+    }
 }
 
 function Test-SshpassWindowsBinary {
@@ -125,7 +143,7 @@ function Install-WithScoop {
 function Write-BootstrapState {
     param(
         [bool]$SshpassInstalled,
-        [string]$BashFlavor,
+        [string]$RuntimeType,
         [string]$BashPath,
         [string]$SshpassProvider
     )
@@ -139,12 +157,13 @@ function Write-BootstrapState {
         skill_name           = "remote"
         sshpass_installed    = $SshpassInstalled
         sshpass_version      = (Get-SshpassVersionWindows)
-        os_type              = "windows"
+        os_type              = (Get-HostOsForRuntime -RuntimeType $RuntimeType)
+        runtime_type         = $RuntimeType
         bash_available       = $true
-        bash_flavor          = $BashFlavor
+        bash_flavor          = (Get-BashFlavorForRuntime -RuntimeType $RuntimeType)
         bash_path            = $BashPath
         sshpass_provider     = $SshpassProvider
-        windows_remote_ready = ($SshpassInstalled -and $BashFlavor -ne "unknown")
+        windows_remote_ready = ($SshpassInstalled -and $RuntimeType -eq "windows-msys")
         last_setup_at        = $now
         last_verified_at     = $now
     }
@@ -153,57 +172,56 @@ function Write-BootstrapState {
 }
 
 $bash = Get-BashCommand
-$bashFlavor = Get-BashFlavor -BashPath $bash.Source
-if ($bashFlavor -eq "unknown") {
-    throw "未识别到当前 bash 运行时，无法安全完成 remote setup。"
-}
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-if ($bashFlavor -eq "wsl") {
-    Write-Log "当前 bash 运行时为 WSL，改为在 WSL 内安装 Linux sshpass。"
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $quoted = New-Object System.Collections.Generic.List[string]
-    $quoted.Add("REMOTE_BASH_LC=1")
-    $quoted.Add("REMOTE_HOST_OS=windows")
-    $quoted.Add("REMOTE_HOST_BASH_FLAVOR=$(Quote-BashArg -Value $bashFlavor)")
-    $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
-    $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
-    $quoted.Add((Quote-BashArg -Value "./setup.sh"))
-    if ($Force) {
-        $quoted.Add("--force")
-    }
+Push-Location $scriptDir
+try {
+    $runtimeType = Get-RuntimeType -BashPath $bash.Source
 
-    Push-Location $scriptDir
-    try {
+    if ($runtimeType -eq "linux-wsl") {
+        Write-Log "当前执行环境为 linux-wsl，改为在 WSL 内安装 Linux sshpass。"
+        $quoted = New-Object System.Collections.Generic.List[string]
+        $quoted.Add("REMOTE_BASH_LC=1")
+        $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
+        $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
+        if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+            $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
+        }
+        $quoted.Add((Quote-BashArg -Value "./setup.sh"))
+        if ($Force) {
+            $quoted.Add("--force")
+        }
+
         & $bash.Source -lc ([string]::Join(' ', $quoted))
         exit $LASTEXITCODE
     }
-    finally {
-        Pop-Location
-    }
-}
 
-if ($bashFlavor -ne "msys") {
-    throw "当前 Windows bash 运行时既不是 WSL 也不是 MSYS，无法继续 setup。"
-}
-
-if ((-not $Force) -and (Test-SshpassWindows)) {
-    Write-Log "检测到 Windows sshpass，跳过安装。"
-} else {
-    $installed = Install-WithWinget
-    if (-not $installed) {
-        $installed = Install-WithScoop
+    if ($runtimeType -ne "windows-msys") {
+        throw "当前执行环境不受支持：$runtimeType"
     }
 
-    if (-not $installed) {
-        throw "winget 与 scoop 都未成功安装 sshpass。"
+    if ((-not $Force) -and (Test-SshpassWindows)) {
+        Write-Log "检测到 Windows sshpass，跳过安装。"
+    } else {
+        $installed = Install-WithWinget
+        if (-not $installed) {
+            $installed = Install-WithScoop
+        }
+
+        if (-not $installed) {
+            throw "winget 与 scoop 都未成功安装 sshpass。"
+        }
     }
-}
 
-$verified = Test-SshpassWindows
-Write-BootstrapState -SshpassInstalled $verified -BashFlavor $bashFlavor -BashPath $bash.Source -SshpassProvider "windows"
-if (-not $verified) {
-    throw "安装完成后仍未检测到可用的 Windows sshpass。"
-}
+    $verified = Test-SshpassWindows
+    Write-BootstrapState -SshpassInstalled $verified -RuntimeType $runtimeType -BashPath $bash.Source -SshpassProvider "windows"
+    if (-not $verified) {
+        throw "安装完成后仍未检测到可用的 Windows sshpass。"
+    }
 
-Write-Log "sshpass 已完成验证，状态文件已写入 $(Get-BootstrapStateFile)"
-Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前 provider 为 windows。"
+    Write-Log "sshpass 已完成验证，状态文件已写入 $(Get-BootstrapStateFile)"
+    Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前执行环境为 $runtimeType。"
+}
+finally {
+    Pop-Location
+}

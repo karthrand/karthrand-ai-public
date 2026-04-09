@@ -8,6 +8,10 @@
 - 诊断类任务首轮不要用 `grep`、`head`、`tail` 预过滤
 - 多维采集优先并行执行
 - 信息不全时不要直接下结论
+- 远程命令必须走标准主链：Windows 用 `remote.ps1`，其他系统用 `remote.sh`
+- 不要手工执行 `sshpass ... ssh ...`
+- 连接失败后不要依次切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
+- `Permission denied` 只能先解释为“远端拒绝了密码认证”
 
 ## 推荐执行方式
 
@@ -15,6 +19,12 @@
 
 ```bash
 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"
+```
+
+Windows 示例：
+
+```powershell
+.\skills\remote\scripts\remote.ps1 --user root --password "secret" "10.0.0.8" "hostname && whoami"
 ```
 
 ### 并行多命令

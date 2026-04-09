@@ -16,12 +16,13 @@
   "skill_name": "remote",
   "sshpass_installed": true,
   "sshpass_version": "unknown",
-  "os_type": "windows",
+  "os_type": "linux",
+  "runtime_type": "linux-wsl",
   "bash_available": true,
   "bash_flavor": "wsl",
   "bash_path": "C:\\Windows\\System32\\bash.exe",
   "sshpass_provider": "linux",
-  "windows_remote_ready": true,
+  "windows_remote_ready": false,
   "last_setup_at": "2026-04-09T12:00:00+08:00",
   "last_verified_at": "2026-04-09T12:00:00+08:00"
 }
@@ -32,6 +33,11 @@
 - 只表达安装与验证结果
 - 不保存服务器业务数据
 - `sshpass_version` 允许为 `"unknown"`
+- `runtime_type` 允许值：
+  - `windows-msys`
+  - `linux-wsl`
+  - `linux-native`
+  - `macos-native`
 - `bash_flavor` 允许值：
   - `wsl`
   - `msys`
@@ -41,9 +47,14 @@
   - `linux`
   - `windows`
   - `unknown`
+- `runtime_type` 与其他字段的映射固定如下：
+  - `windows-msys` -> `os_type=windows`、`bash_flavor=msys`、`sshpass_provider=windows`
+  - `linux-wsl` -> `os_type=linux`、`bash_flavor=wsl`、`sshpass_provider=linux`
+  - `linux-native` -> `os_type=linux`、`bash_flavor=native`、`sshpass_provider=linux`
+  - `macos-native` -> `os_type=macos`、`bash_flavor=native`、`sshpass_provider=linux`
 - 当 `bash_flavor=wsl` 时，`sshpass_provider` 必须是 `linux`
 - 当 `bash_flavor=msys` 时，`sshpass_provider` 必须是 `windows`
-- 当前运行时与状态文件不一致时，状态视为过期，需要重新按真实环境复核
+- 当前执行环境与状态文件不一致时，状态视为过期，需要重新按真实环境复核
 
 ## 2. servers.json
 

@@ -7,7 +7,7 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 
 ## 概述
 
-用于通过 `sshpass` 远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。默认先看 `bootstrap-state.json` 与 `servers.json`，再决定是否需要补充 setup 或连接信息。
+用于通过 `sshpass` 远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。`remote` 只识别执行环境，不识别 code agent；执行环境统一按 `references/setup.md` 判定为 `windows-msys`、`linux-wsl`、`linux-native`、`macos-native`。
 
 ## 何时使用
 
@@ -20,17 +20,14 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 ## 核心流程
 
 1. 先检查本地状态目录中的 `bootstrap-state.json`。
-2. 若状态文件显示当前运行时对应的 `sshpass` 已可用，直接进入理解用户需求阶段。
-3. 若状态文件缺失、显示未安装，或与当前运行时不一致，再按真实环境复核 `sshpass`；仍不可用时才执行 setup。
-4. 再检查 `servers.json` 是否已有目标服务器记录。
-5. 命中记录时，直接复用保存的地址、端口、用户名和密码。
-6. 未命中记录时，立即向用户询问服务器地址、用户名、密码；端口默认 `22`，只有用户显式修改时才覆盖。
-7. 远程执行统一走 `scripts/remote.sh`；Windows 下必须通过 `scripts/remote.ps1` 调用。只有手工直连时，才允许使用带 `REMOTE_BASH_LC=1` 的 `bash -lc` 调用 `scripts/remote.sh`。
-8. Windows 下 `remote.ps1` 会先识别当前 `bash` 运行时：
-   - 命中 `WSL` 时，setup 与执行都使用 WSL 内的 Linux `sshpass`
-   - 命中 `MSYS/Git Bash` 时，setup 与执行都使用 Windows `sshpass-win32`
-9. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
-10. 连接成功后更新 `servers.json`；若连接失败，立即要求用户确认或修改连接信息，再只重试一次。
+2. 若状态文件缺失、显示未安装，或与当前执行环境不一致，必须读取 `references/setup.md`，并只通过标准脚本完成环境复核或 setup；不要手工执行 `which sshpass`、`sshpass -V` 或裸跑 `sshpass ... ssh ...`。
+3. 再检查 `servers.json` 是否已有目标服务器记录。命中记录时直接复用；未命中记录时，立即向用户询问服务器地址、用户名、密码，端口默认 `22`。
+4. 标准入口固定如下：
+   - `windows-msys`：通过 `scripts/remote.ps1` 与 `scripts/setup.ps1`
+   - `linux-wsl`、`linux-native`、`macos-native`：通过 `scripts/remote.sh` 与 `scripts/setup.sh`
+5. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
+6. 连接成功后更新 `servers.json`；连接失败时按“结论 / 证据 / 推断 / 下一步”输出，最多只允许一次基于标准主链的最小重试。
+7. 远端返回 `Permission denied` 时，只能下结论为“密码认证被拒绝”；不能直接解释为密码中的特殊字符、`sshpass` 参数问题或兼容性问题。
 
 ## 按需继续加载
 
@@ -45,4 +42,5 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 - 先说明使用的是本地已保存记录，还是本轮新录入的信息
 - 连接失败时明确指出是地址、端口、用户名、密码还是环境问题待确认
 - 诊断类回答按“结论 / 证据 / 推断 / 下一步”输出
+- 不要在失败后依次试错 `sshpass -k`、`sshpass -e`、`sshpass -p`
 - 不默认执行高风险命令；涉及写操作、重启、删除、停止服务时必须先征求用户确认

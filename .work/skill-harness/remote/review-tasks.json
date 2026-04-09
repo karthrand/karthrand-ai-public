@@ -1,0 +1,83 @@
+{
+  "skill_name": "remote",
+  "last_reviewed_at": "2026-04-09T17:48:09.2450092+08:00",
+  "review_scope": [
+    "skills/remote/SKILL.md",
+    "skills/remote/README.md",
+    "skills/remote/references/setup.md",
+    "skills/remote/references/state.md",
+    "skills/remote/references/remote-guidelines.md",
+    "skills/remote/scripts/remote.ps1",
+    "skills/remote/scripts/remote.sh",
+    "skills/remote/scripts/runtime.sh",
+    "skills/remote/scripts/setup.ps1",
+    "skills/remote/scripts/setup.sh",
+    "skill-harness/references/review-rules-skill-md.md",
+    "skill-harness/references/review-rules-setup.md",
+    "skill-harness/references/review-rules-references.md",
+    "skill-harness/references/review-rules-output.md",
+    "skill-harness/references/reference-setup-common.md"
+  ],
+  "summary": {
+    "conclusion": "有条件通过",
+    "confidence": "中",
+    "focus": "结构项已完成：执行环境判定统一为四态模型，文档与脚本已对齐；当前仍未做真实远程连接实测。"
+  },
+  "tasks": [
+    {
+      "id": "runtime-taxonomy",
+      "title": "定义 remote 的四态执行环境模型",
+      "severity": "must_fix",
+      "category": "setup",
+      "status": "done",
+      "reason": "当前运行时判断分散在多个脚本中，存在 host_os、bash_flavor、provider 混合表达，缺少单一判定模型。",
+      "suggestion": "统一收敛为 windows-msys、linux-wsl、linux-native、macos-native，并明确各自的检测信号与优先级；不要引入 detect-agent.sh 或 code agent 判定。",
+      "evidence": "skills/remote/scripts/remote.ps1, skills/remote/scripts/remote.sh, skills/remote/scripts/setup.ps1, skills/remote/scripts/setup.sh",
+      "updated_at": "2026-04-09T17:48:09.2450092+08:00"
+    },
+    {
+      "id": "skill-md-slim",
+      "title": "压缩 SKILL.md 到主流程骨架",
+      "severity": "must_fix",
+      "category": "skill_md",
+      "status": "done",
+      "reason": "当前 SKILL.md 混入过多 Windows、WSL、MSYS 和失败解释细节，主流程与 reference 分工仍可进一步收紧。",
+      "suggestion": "只保留触发条件、最小执行流程、按需加载点、固定输出要求，并明确 remote 只做执行环境识别。",
+      "evidence": "skills/remote/SKILL.md",
+      "updated_at": "2026-04-09T17:48:09.2450092+08:00"
+    },
+    {
+      "id": "setup-reference-centralize",
+      "title": "把执行环境判定与 setup 规则集中到 setup reference",
+      "severity": "must_fix",
+      "category": "references",
+      "status": "done",
+      "reason": "当前 setup 规则散落在 SKILL.md、README 和脚本中，容易造成术语与分支漂移。",
+      "suggestion": "在 references/setup.md 固化四态执行环境的检测方式、sshpass 检测与修复规则、成功标准和单次强制修复边界。",
+      "evidence": "skills/remote/references/setup.md, skills/remote/README.md, skills/remote/SKILL.md",
+      "updated_at": "2026-04-09T17:48:09.2450092+08:00"
+    },
+    {
+      "id": "readme-deduplicate",
+      "title": "收敛 README 与规则文档的重复内容",
+      "severity": "should_improve",
+      "category": "references",
+      "status": "done",
+      "reason": "README 同时承担使用说明和规则说明，部分内容与 setup/reference 文档重复。",
+      "suggestion": "README 只保留使用者视角的手动 setup、调用示例和故障排查，规则性内容下沉到 references。",
+      "evidence": "skills/remote/README.md, skills/remote/references/setup.md",
+      "updated_at": "2026-04-09T17:48:09.2450092+08:00"
+    },
+    {
+      "id": "bootstrap-runtime-alignment",
+      "title": "对齐 bootstrap-state 与执行环境语义",
+      "severity": "should_improve",
+      "category": "setup",
+      "status": "done",
+      "reason": "状态文件当前依赖多个字段组合表达运行时，文档层尚未把这些字段与统一执行环境模型明确映射。",
+      "suggestion": "保留现有字段也可以，但必须在 state.md 和 setup.md 中明确它们如何映射到四态执行环境，并约束匹配规则。",
+      "evidence": "skills/remote/references/state.md, skills/remote/references/setup.md, skills/remote/scripts/remote.sh",
+      "updated_at": "2026-04-09T17:48:09.2450092+08:00"
+    }
+  ]
+}
