@@ -24,7 +24,7 @@
   "runtime_type": "windows-msys",
   "bash_available": true,
   "bash_flavor": "msys",
-  "bash_path": "C:\\Program Files\\Git\\bin\\bash.exe",
+  "bash_path": "C:/Program Files/Git/bin/bash.exe",
   "windows_remote_ready": true,
   "last_setup_at": "2026-04-09T12:00:00+08:00",
   "last_verified_at": "2026-04-09T12:00:00+08:00"

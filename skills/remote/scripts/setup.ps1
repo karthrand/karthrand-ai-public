@@ -88,24 +88,34 @@ function Test-SshAvailable {
         return $false
     }
 
+    # 局部切换 ErrorActionPreference：全局 "Stop" 会导致 ssh -V 的 stderr 输出被当作终止错误
+    $prevEAP = $ErrorActionPreference
     try {
-        $versionOutput = (& ssh -V 2>&1 | Out-String).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($versionOutput)) {
+        $ErrorActionPreference = 'Continue'
+        $output = (& ssh -V 2>&1 | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($output)) {
             return $true
         }
     } catch {
+    } finally {
+        $ErrorActionPreference = $prevEAP
     }
 
     return $false
 }
 
 function Get-SshVersion {
+    # 局部切换 ErrorActionPreference：全局 "Stop" 会导致 ssh -V 的 stderr 输出被当作终止错误
+    $prevEAP = $ErrorActionPreference
     try {
+        $ErrorActionPreference = 'Continue'
         $output = (& ssh -V 2>&1 | Out-String).Trim()
         if ($output -match 'OpenSSH_([0-9]+\.[0-9]+)') {
             return $Matches[1]
         }
     } catch {
+    } finally {
+        $ErrorActionPreference = $prevEAP
     }
 
     return "unknown"
@@ -123,6 +133,8 @@ function Write-BootstrapState {
     $null = New-Item -ItemType Directory -Path $stateDir -Force
 
     $now = [DateTimeOffset]::Now.ToString("yyyy-MM-ddTHH:mm:sszzz")
+    # Windows 路径反斜杠在 PS 5.1 ConvertTo-Json 下不会被转义，统一转为正斜杠避免生成无效 JSON
+    $normalizedBashPath = $BashPath -replace '\\', '/'
     $payload = [ordered]@{
         skill_name           = "remote"
         sshpass_installed    = $false
@@ -135,7 +147,7 @@ function Write-BootstrapState {
         runtime_type         = $RuntimeType
         bash_available       = $true
         bash_flavor          = (Get-BashFlavorForRuntime -RuntimeType $RuntimeType)
-        bash_path            = $BashPath
+        bash_path            = $normalizedBashPath
         windows_remote_ready = ($SshInstalled -and $RuntimeType -eq "windows-msys")
         last_setup_at        = $now
         last_verified_at     = $now
@@ -156,7 +168,7 @@ try {
         Write-Log "当前执行环境为 linux-wsl，改为在 WSL 内安装 Linux sshpass。"
         $quoted = New-Object System.Collections.Generic.List[string]
         $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
-        $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
+        $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
         if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
             $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
         }

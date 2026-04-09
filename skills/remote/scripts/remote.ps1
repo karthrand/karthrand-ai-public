@@ -166,8 +166,8 @@ function Build-RemoteShArgs {
         if ([string]::IsNullOrWhiteSpace($ParsedArgs.Username) -or [string]::IsNullOrWhiteSpace($ParsedArgs.Password)) {
             throw "-Save 必须同时提供 -Username 和 -Password。"
         }
-        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command) -or $ParsedArgs.Commands.Count -gt 0) {
-            throw "-Save 不允许同时提供 -Command 或 -Commands。"
+        if ($ParsedArgs.Commands.Count -gt 0) {
+            throw "-Save 不允许同时提供 -Commands。请使用 -Command 指定单条命令。"
         }
 
         $translated.Add("--save")
@@ -223,8 +223,10 @@ function Build-RemoteShArgs {
         foreach ($command in $ParsedArgs.Commands) {
             $translated.Add($command)
         }
-    } elseif (-not $ParsedArgs.Save -and -not $ParsedArgs.Show) {
-        $translated.Add($ParsedArgs.Command)
+    } elseif (-not $ParsedArgs.Show) {
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
+            $translated.Add($ParsedArgs.Command)
+        }
     }
 
     return ,$translated.ToArray()
@@ -265,7 +267,7 @@ try {
 
     $quoted = New-Object System.Collections.Generic.List[string]
     $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
-    $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
+    $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
     }

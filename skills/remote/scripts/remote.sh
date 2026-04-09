@@ -20,6 +20,7 @@ usage() {
   cat <<'EOF'
 用法：
   remote.sh --save "<address>" --user "<username>" --password "<password>" [--port 22]
+  remote.sh --save "<address>" "<command>" --user "<username>" --password "<password>" [--port 22]
   remote.sh --show "<address>" [--port 22]
   remote.sh "<address>" "<command>"
   remote.sh --parallel "<address>" "<cmd1>" "<cmd2>" ...
@@ -938,9 +939,23 @@ case "$ACTION" in
       exit 2
     }
     [ -n "$CLI_PORT" ] || CLI_PORT="$DEFAULT_PORT"
-    save_server_record "$PARSED_ADDRESS" "$CLI_PORT" "$CLI_USER" "$CLI_PASSWORD" "" ""
-    log "已保存服务器记录：${PARSED_ADDRESS}:${CLI_PORT}"
-    exit 0
+
+    if [ "${#POSITIONAL[@]}" -ge 2 ]; then
+      # --save 带命令：先执行命令，execute_single 内部会在成功时保存服务器记录
+      ensure_ssh_windows
+      ensure_sshpass
+      REMOTE_SSH_USER="$CLI_USER" \
+      REMOTE_SSH_PASSWORD="$CLI_PASSWORD" \
+      REMOTE_SSH_PORT="$CLI_PORT" \
+      build_connection_context "${POSITIONAL[0]}"
+      execute_single "${POSITIONAL[1]}"
+      exit $?
+    else
+      # --save 无命令：仅保存服务器记录
+      save_server_record "$PARSED_ADDRESS" "$CLI_PORT" "$CLI_USER" "$CLI_PASSWORD" "" ""
+      log "已保存服务器记录：${PARSED_ADDRESS}:${CLI_PORT}"
+      exit 0
+    fi
     ;;
   show)
     [ "${#POSITIONAL[@]}" -ge 1 ] || {
