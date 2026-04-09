@@ -9,7 +9,7 @@
 - 多维采集优先并行执行
 - 信息不全时不要直接下结论
 - 远程命令必须走标准主链：Windows 用 `remote.ps1`，其他系统用 `remote.sh`
-- 不要手工执行 `sshpass ... ssh ...`
+- 不要手工执行 `sshpass ... ssh ...`（仅适用于 Linux/macOS）
 - 连接失败后不要依次切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
 - `Permission denied` 只能先解释为“远端拒绝了密码认证”
 

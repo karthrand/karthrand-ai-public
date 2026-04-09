@@ -95,9 +95,8 @@ bash -lc './skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"'
 
 禁止：
 
-- 在 PowerShell 中裸跑 `sshpass ... ssh ...`
 - 在 Windows 下直接执行 `remote.sh`
-- 在连接失败后手工切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
+- 在连接失败后手工切换不同的密码传递参数试错
 
 ### macOS / Linux
 
