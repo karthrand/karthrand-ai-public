@@ -4,9 +4,9 @@
 
 - 第一次使用 `remote` skill
 - `bootstrap-state.json` 不存在
-- `bootstrap-state.json` 显示 `sshpass_installed=false`
+- `bootstrap-state.json` 显示未就绪
 - `bootstrap-state.json` 与当前运行时不一致
-- 远程执行前发现 `sshpass` 真实不可用
+- 远程执行前发现认证工具真实不可用
 
 ## 执行环境判定
 
@@ -14,11 +14,11 @@
 
 - `windows-msys`
   - `uname -s` 命中 `MINGW*`、`MSYS*` 或 `CYGWIN*`
-  - `sshpass` provider 使用 Windows `sshpass-win32`
+  - 密码传递使用 `SSH_ASKPASS` 机制（OpenSSH 原生支持）
 - `linux-wsl`
   - `uname -s` 为 `Linux`
   - 且命中 `WSL_DISTRO_NAME`、`WSL_INTEROP`，或 `/proc/version` 包含 `microsoft`
-  - 视为 Linux 分支处理
+  - 视为 Linux 分支处理，使用 `sshpass`
 - `linux-native`
   - `uname -s` 为 `Linux`
   - 且不命中 WSL 信号
@@ -45,11 +45,24 @@ setup 成功后写入：
 
 ## 检测方式
 
-统一规则：
+### Windows（`windows-msys`）
+
+验证 SSH 可用性：
+
+```text
+1. ssh 命令存在
+2. ssh -V 有输出
+```
+
+如 SSH 不可用，直接终止 skill（`exit 13`）。Windows 11 自带 OpenSSH，通常无需额外安装。
+
+### Linux / macOS
+
+验证 sshpass 可用性：
 
 ```text
 1. 命令存在
-2. `sshpass -V` 或 `sshpass -h` 至少一种可识别
+2. sshpass -V 或 sshpass -h 至少一种可识别
 ```
 
 如命令不存在或帮助/版本输出异常，判定为未完成 setup。
@@ -65,28 +78,15 @@ setup 成功后写入：
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 ```
 
-固定先尝试：
+Windows 使用 `SSH_ASKPASS` 机制，不需要安装 `sshpass`。setup 脚本只验证 SSH 可用性，不可用则抛异常。
 
-```powershell
-winget install --source winget --exact --id xhcoding.sshpass-win32
-```
-
-失败后再尝试：
-
-```powershell
-scoop install Sshpass
-```
-
-状态文件写为 `runtime_type=windows-msys`、`bash_flavor=msys`、`sshpass_provider=windows`
+状态文件写为 `runtime_type=windows-msys`、`bash_flavor=msys`、`auth_mechanism=ssh_askpass`
 
 注意：
 
-- `windows-msys` 下远程访问必须通过 `scripts/remote.ps1` 进入。
-- 不允许在 PowerShell 中裸跑 `sshpass ... ssh ...`。
-- 不允许在 `windows-msys` 下直接执行 `remote.sh`。
+- `windows-msys` 下远程访问推荐通过 `scripts/remote.ps1` 进入。
 - 不允许在连接失败后依次切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错。
-- 如果手工使用 `bash -lc`，必须让调用链带上 `REMOTE_BASH_LC=1` 运行标记。
-- `setup.ps1` 只负责安装与验证，不负责直接远程连接。
+- `setup.ps1` 只负责验证，不负责直接远程连接。
 
 ### linux-wsl / linux-native
 
@@ -122,10 +122,10 @@ brew install hudochenkov/sshpass/sshpass
 
 ## 成功标准
 
-- `bootstrap-state.json` 中 `sshpass_installed=true`
+- `bootstrap-state.json` 中认证机制已就绪
 - `bootstrap-state.json` 中 `runtime_type` 与当前执行环境一致
 - `bootstrap-state.json` 中 `bash_flavor` 与当前执行环境映射一致
-- `bootstrap-state.json` 中 `sshpass_provider` 与当前执行环境对应的 provider 一致
+- `bootstrap-state.json` 中 `auth_mechanism` 与当前运行环境对应的机制一致
 - `windows-msys` 下 `bootstrap-state.json` 还必须满足 `bash_available=true` 与 `windows_remote_ready=true`
 - `bootstrap-state.json` 记录最近一次 setup 与验证时间
 
@@ -133,7 +133,7 @@ brew install hudochenkov/sshpass/sshpass
 
 只有以下情况才触发 setup 或强制修复：
 
-- `sshpass` 命令不存在
+- 认证工具不可用（Windows: SSH 不可用；Linux/macOS: sshpass 不可用）
 - `bootstrap-state.json` 缺失
 - `bootstrap-state.json` 与当前执行环境不一致
 - 状态文件显示未安装，且脚本复核真实环境后仍不可用

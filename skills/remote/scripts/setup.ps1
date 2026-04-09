@@ -82,27 +82,15 @@ function Get-BashFlavorForRuntime {
     }
 }
 
-function Test-SshpassWindowsBinary {
-    $cmd = Get-Command sshpass -ErrorAction SilentlyContinue
-    return $null -ne $cmd
-}
-
-function Test-SshpassWindows {
-    if (-not (Test-SshpassWindowsBinary)) {
+function Test-SshAvailable {
+    $cmd = Get-Command ssh -ErrorAction SilentlyContinue
+    if ($null -eq $cmd) {
         return $false
     }
 
     try {
-        $versionOutput = (& sshpass -V 2>&1 | Out-String).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($versionOutput) -and $versionOutput -match 'sshpass|Usage:') {
-            return $true
-        }
-    } catch {
-    }
-
-    try {
-        $helpOutput = (& sshpass -h 2>&1 | Out-String).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($helpOutput) -and $helpOutput -match 'Usage:') {
+        $versionOutput = (& ssh -V 2>&1 | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($versionOutput)) {
             return $true
         }
     } catch {
@@ -111,51 +99,23 @@ function Test-SshpassWindows {
     return $false
 }
 
-function Get-SshpassVersionWindows {
-    foreach ($script in @(
-        { (& sshpass -V 2>&1 | Out-String).Trim() },
-        { (& sshpass -h 2>&1 | Out-String).Trim() }
-    )) {
-        try {
-            $output = & $script
-            if ($output -match '([0-9]+\.[0-9]+)') {
-                return $Matches[1]
-            }
-        } catch {
+function Get-SshVersion {
+    try {
+        $output = (& ssh -V 2>&1 | Out-String).Trim()
+        if ($output -match 'OpenSSH_([0-9]+\.[0-9]+)') {
+            return $Matches[1]
         }
+    } catch {
     }
 
     return "unknown"
 }
 
-function Install-WithWinget {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($null -eq $winget) {
-        return $false
-    }
-
-    Write-Log "使用 winget 安装 sshpass-win32。"
-    & winget install --source winget --exact --id xhcoding.sshpass-win32 --accept-package-agreements --accept-source-agreements
-    return $LASTEXITCODE -eq 0
-}
-
-function Install-WithScoop {
-    $scoop = Get-Command scoop -ErrorAction SilentlyContinue
-    if ($null -eq $scoop) {
-        return $false
-    }
-
-    Write-Log "winget 失败，改用 scoop 安装 Sshpass。"
-    & scoop install Sshpass
-    return $LASTEXITCODE -eq 0
-}
-
 function Write-BootstrapState {
     param(
-        [bool]$SshpassInstalled,
+        [bool]$SshInstalled,
         [string]$RuntimeType,
-        [string]$BashPath,
-        [string]$SshpassProvider
+        [string]$BashPath
     )
 
     $stateDir = Get-StateDir
@@ -165,15 +125,18 @@ function Write-BootstrapState {
     $now = [DateTimeOffset]::Now.ToString("yyyy-MM-ddTHH:mm:sszzz")
     $payload = [ordered]@{
         skill_name           = "remote"
-        sshpass_installed    = $SshpassInstalled
-        sshpass_version      = (Get-SshpassVersionWindows)
+        sshpass_installed    = $false
+        sshpass_version      = "none"
+        sshpass_provider     = "none"
+        auth_mechanism       = "ssh_askpass"
+        ssh_installed        = $SshInstalled
+        ssh_version          = (Get-SshVersion)
         os_type              = (Get-HostOsForRuntime -RuntimeType $RuntimeType)
         runtime_type         = $RuntimeType
         bash_available       = $true
         bash_flavor          = (Get-BashFlavorForRuntime -RuntimeType $RuntimeType)
         bash_path            = $BashPath
-        sshpass_provider     = $SshpassProvider
-        windows_remote_ready = ($SshpassInstalled -and $RuntimeType -eq "windows-msys")
+        windows_remote_ready = ($SshInstalled -and $RuntimeType -eq "windows-msys")
         last_setup_at        = $now
         last_verified_at     = $now
     }
@@ -192,7 +155,6 @@ try {
     if ($runtimeType -eq "linux-wsl") {
         Write-Log "当前执行环境为 linux-wsl，改为在 WSL 内安装 Linux sshpass。"
         $quoted = New-Object System.Collections.Generic.List[string]
-        $quoted.Add("REMOTE_BASH_LC=1")
         $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
         $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
         if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -211,26 +173,22 @@ try {
         throw "当前执行环境不受支持：$runtimeType"
     }
 
-    if ((-not $Force) -and (Test-SshpassWindows)) {
-        Write-Log "检测到 Windows sshpass，跳过安装。"
+    # Windows: 验证 SSH 可用性（使用 SSH_ASKPASS 机制，不安装 sshpass）
+    if ((-not $Force) -and (Test-SshAvailable)) {
+        Write-Log "检测到可用 SSH，跳过安装。"
     } else {
-        $installed = Install-WithWinget
-        if (-not $installed) {
-            $installed = Install-WithScoop
-        }
-
-        if (-not $installed) {
-            throw "winget 与 scoop 都未成功安装 sshpass。"
+        if (-not (Test-SshAvailable)) {
+            throw "未检测到可用的 SSH。Windows 下 SSH 通常随 Git for Windows 或 MSYS2 提供，请确认已安装。"
         }
     }
 
-    $verified = Test-SshpassWindows
-    Write-BootstrapState -SshpassInstalled $verified -RuntimeType $runtimeType -BashPath $bash.Source -SshpassProvider "windows"
+    $verified = Test-SshAvailable
+    Write-BootstrapState -SshInstalled $verified -RuntimeType $runtimeType -BashPath $bash.Source
     if (-not $verified) {
-        throw "安装完成后仍未检测到可用的 Windows sshpass。"
+        throw "SSH 验证失败，无法完成 Windows 远程访问环境设置。"
     }
 
-    Write-Log "sshpass 已完成验证，状态文件已写入 $(Get-BootstrapStateFile)"
+    Write-Log "SSH 已完成验证（使用 SSH_ASKPASS 机制），状态文件已写入 $(Get-BootstrapStateFile)"
     Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前执行环境为 $runtimeType。"
 }
 finally {

@@ -164,6 +164,8 @@ payload = {
     "skill_name": "remote",
     "sshpass_installed": os.environ["SSHPASS_INSTALLED"] == "true",
     "sshpass_version": os.environ["SSHPASS_VERSION"],
+    "auth_mechanism": "sshpass",
+    "ssh_installed": True,
     "os_type": os.environ["CURRENT_HOST_OS"],
     "runtime_type": os.environ["CURRENT_RUNTIME_TYPE"],
     "bash_available": True,

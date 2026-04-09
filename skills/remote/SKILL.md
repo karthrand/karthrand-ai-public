@@ -1,13 +1,17 @@
 ---
 name: remote
-description: 当用户需要远程访问 Linux 服务器、复用本地保存的服务器信息、通过 sshpass 执行单条或并行命令，或首次连接/登录失败后需要补齐服务器地址与凭据时使用。
+description: 当用户需要远程访问 Linux 服务器、复用本地保存的服务器信息、通过 sshpass 或 SSH_ASKPASS 执行单条或并行命令，或首次连接/登录失败后需要补齐服务器地址与凭据时使用。
 ---
 
 # Remote 技能
 
 ## 概述
 
-用于通过 `sshpass` 远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。`remote` 只识别执行环境，不识别 code agent；执行环境统一按 `references/setup.md` 判定为 `windows-msys`、`linux-wsl`、`linux-native`、`macos-native`。
+用于远程访问 Linux 服务器，并在本地状态目录维护 setup 状态与服务器信息。`remote` 只识别执行环境，不识别 code agent；执行环境统一按 `references/setup.md` 判定为 `windows-msys`、`linux-wsl`、`linux-native`、`macos-native`。
+
+密码传递机制：
+- Windows（`windows-msys`）：使用 `SSH_ASKPASS` 环境变量机制（OpenSSH 原生支持，无需额外安装）
+- Linux/macOS/WSL：使用 `sshpass`
 
 ## 何时使用
 
@@ -27,15 +31,15 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
    - `linux-wsl`、`linux-native`、`macos-native`：通过 `scripts/remote.sh` 与 `scripts/setup.sh`
    - Windows 推荐优先使用 `remote.ps1` 的 PowerShell 命名参数：`-Address`、`-Port`、`-Username`、`-Password`、`-Command`、`-Commands`、`-Save`、`-Show`、`-Parallel`
 5. 诊断类任务遵循 `references/remote-guidelines.md`：首轮完整采集、优先并行、不提前过滤、不做破坏性动作。
-6. 连接成功后更新 `servers.json`；连接失败时按“结论 / 证据 / 推断 / 下一步”输出，最多只允许一次基于标准主链的最小重试。
-7. 远端返回 `Permission denied` 时，只能下结论为“密码认证被拒绝”；不能直接解释为密码中的特殊字符、`sshpass` 参数问题或兼容性问题。
-8. `windows-msys` 下远程执行必须是纯非交互；若凭据错误，应直接失败，不能弹出 Git for Windows 或其他 askpass 窗口。
+6. 连接成功后更新 `servers.json`；连接失败时按”结论 / 证据 / 推断 / 下一步”输出，最多只允许一次基于标准主链的最小重试。
+7. 远端返回 `Permission denied` 时，只能下结论为”密码认证被拒绝”；不能直接解释为密码中的特殊字符或兼容性问题。
+8. `windows-msys` 下使用 `SSH_ASKPASS` 机制自动提供密码，保持纯非交互；若凭据错误，应直接失败。
 
 ## 按需继续加载
 
 出现以下场景时再读对应文档：
 
-- 需要安装、修复或验证 `sshpass`：`references/setup.md`
+- 需要安装、修复或验证环境：`references/setup.md`
 - 需要确认本地状态目录、`bootstrap-state.json` 或 `servers.json` 的结构：`references/state.md`
 - 需要执行诊断采集、并行命令或高风险判断边界：`references/remote-guidelines.md`
 
@@ -43,7 +47,7 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 
 - 先说明使用的是本地已保存记录，还是本轮新录入的信息
 - 连接失败时明确指出是地址、端口、用户名、密码还是环境问题待确认
-- 诊断类回答按“结论 / 证据 / 推断 / 下一步”输出
+- 诊断类回答按”结论 / 证据 / 推断 / 下一步”输出
 - 不要在失败后依次试错 `sshpass -k`、`sshpass -e`、`sshpass -p`
 - 不默认执行高风险命令；涉及写操作、重启、删除、停止服务时必须先征求用户确认
 - 本地状态文件统一按无 BOM UTF-8 写入；读取时兼容历史 BOM 文件，不能因编码头导致主链中断

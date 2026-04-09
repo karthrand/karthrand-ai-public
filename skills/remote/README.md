@@ -1,9 +1,13 @@
 # Remote 远程访问技能
 
-`remote` 是一个面向内部场景的 Linux 服务器远程访问 skill。它默认使用 `sshpass`，并在宿主本地状态目录保存：
+`remote` 是一个面向内部场景的 Linux 服务器远程访问 skill。它在宿主本地状态目录保存：
 
-- `bootstrap-state.json`：当前运行时对应的 `sshpass` setup 与验证状态
+- `bootstrap-state.json`：当前运行时对应的 setup 与验证状态
 - `servers.json`：服务器地址、端口、用户名、密码与最近一次验证结果
+
+密码传递机制：
+- Windows（`windows-msys`）：`SSH_ASKPASS`（OpenSSH 原生支持，无需额外安装）
+- Linux/macOS/WSL：`sshpass`
 
 ## 目录结构
 
@@ -48,14 +52,12 @@ skills/remote/
 
 ### Windows
 
-先执行：
-
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 ```
 
-- `windows-msys` 直接安装 `sshpass-win32`
-- `linux-wsl` 由 `setup.ps1` 转发到 `setup.sh`
+- `windows-msys`：验证 SSH 可用性，使用 `SSH_ASKPASS` 机制（无需安装 sshpass）
+- `linux-wsl`：由 `setup.ps1` 转发到 `setup.sh` 安装 sshpass
 
 ### macOS / Linux
 
@@ -83,19 +85,18 @@ Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.p
 ```
 
 状态文件统一使用无 BOM 的 UTF-8 写入；读取端兼容历史 UTF-8 BOM 文件。
-`windows-msys` 下远程执行必须保持纯非交互；凭据错误时应直接失败，不允许弹出 Git for Windows 或其他 askpass 密码窗口。
+`windows-msys` 下使用 `SSH_ASKPASS` 机制自动提供密码，保持纯非交互；凭据错误时应直接失败。
 
 如果手工执行，也只能显式使用：
 
 ```powershell
-bash -lc 'REMOTE_BASH_LC=1 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"'
+bash -lc './skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"'
 ```
 
 禁止：
 
 - 在 PowerShell 中裸跑 `sshpass ... ssh ...`
 - 在 Windows 下直接执行 `remote.sh`
-- 在 `windows-msys` 下接受 Git for Windows 或其他 askpass 弹窗并手工输入密码
 - 在连接失败后手工切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
 
 ### macOS / Linux
@@ -126,4 +127,4 @@ bash -lc 'REMOTE_BASH_LC=1 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostnam
 - 默认不做批量改动、重启、删除、停服务
 - 诊断类任务首轮不应先用 `grep/head/tail` 过滤
 - 多维采集优先并行执行
-- 认证失败时只能先报告“远端拒绝了密码认证”，不能直接归因为密码特殊字符或兼容性问题
+- 认证失败时只能先报告"远端拒绝了密码认证"，不能直接归因为密码特殊字符或兼容性问题

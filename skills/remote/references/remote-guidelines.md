@@ -29,7 +29,7 @@ Windows 示例：
 
 补充要求：
 
-- `windows-msys` 下必须保持纯非交互，不允许弹出 Git for Windows 或其他 askpass 密码窗口
+- `windows-msys` 下使用 `SSH_ASKPASS` 机制自动提供密码，保持纯非交互
 - 凭据无效时应直接返回失败诊断，不能依赖人工输入密码继续执行
 
 ### 并行多命令

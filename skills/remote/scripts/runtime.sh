@@ -77,7 +77,8 @@ remote_detect_bash_flavor() {
 remote_detect_sshpass_provider() {
   case "$(remote_detect_runtime_type)" in
     windows-msys)
-      printf 'windows\n'
+      # Windows 使用 SSH_ASKPASS 机制，不需要 sshpass
+      printf 'none\n'
       ;;
     linux-wsl|linux-native|macos-native)
       printf 'linux\n'

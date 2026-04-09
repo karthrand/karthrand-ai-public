@@ -264,7 +264,6 @@ try {
     $remoteShArgs = Build-RemoteShArgs -ParsedArgs $parsedArgs
 
     $quoted = New-Object System.Collections.Generic.List[string]
-    $quoted.Add("REMOTE_BASH_LC=1")
     $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
     $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value $bash.Source)")
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {

@@ -14,14 +14,38 @@
 ```json
 {
   "skill_name": "remote",
+  "sshpass_installed": false,
+  "sshpass_version": "none",
+  "sshpass_provider": "none",
+  "auth_mechanism": "ssh_askpass",
+  "ssh_installed": true,
+  "ssh_version": "10.2",
+  "os_type": "windows",
+  "runtime_type": "windows-msys",
+  "bash_available": true,
+  "bash_flavor": "msys",
+  "bash_path": "C:\\Program Files\\Git\\bin\\bash.exe",
+  "windows_remote_ready": true,
+  "last_setup_at": "2026-04-09T12:00:00+08:00",
+  "last_verified_at": "2026-04-09T12:00:00+08:00"
+}
+```
+
+Linux/macOS 示例：
+
+```json
+{
+  "skill_name": "remote",
   "sshpass_installed": true,
-  "sshpass_version": "unknown",
+  "sshpass_version": "1.10",
+  "sshpass_provider": "linux",
+  "auth_mechanism": "sshpass",
+  "ssh_installed": true,
   "os_type": "linux",
   "runtime_type": "linux-wsl",
   "bash_available": true,
   "bash_flavor": "wsl",
-  "bash_path": "C:\\Windows\\System32\\bash.exe",
-  "sshpass_provider": "linux",
+  "bash_path": "/usr/bin/bash",
   "windows_remote_ready": false,
   "last_setup_at": "2026-04-09T12:00:00+08:00",
   "last_verified_at": "2026-04-09T12:00:00+08:00"
@@ -33,7 +57,10 @@
 - 只表达安装与验证结果
 - 不保存服务器业务数据
 - 文件编码统一为无 BOM UTF-8；读取端需要兼容历史 BOM 文件
-- `sshpass_version` 允许为 `"unknown"`
+- `auth_mechanism` 允许值：`"ssh_askpass"`（Windows）、`"sshpass"`（Linux/macOS/WSL）
+- `ssh_installed` 为布尔值，表示 SSH 客户端是否可用
+- `ssh_version` 允许为 `"unknown"`
+- `sshpass_version` 在 Windows 下固定为 `"none"`
 - `runtime_type` 允许值：
   - `windows-msys`
   - `linux-wsl`
@@ -46,15 +73,15 @@
   - `unknown`
 - `sshpass_provider` 允许值：
   - `linux`
-  - `windows`
+  - `none`
   - `unknown`
 - `runtime_type` 与其他字段的映射固定如下：
-  - `windows-msys` -> `os_type=windows`、`bash_flavor=msys`、`sshpass_provider=windows`
-  - `linux-wsl` -> `os_type=linux`、`bash_flavor=wsl`、`sshpass_provider=linux`
-  - `linux-native` -> `os_type=linux`、`bash_flavor=native`、`sshpass_provider=linux`
-  - `macos-native` -> `os_type=macos`、`bash_flavor=native`、`sshpass_provider=linux`
-- 当 `bash_flavor=wsl` 时，`sshpass_provider` 必须是 `linux`
-- 当 `bash_flavor=msys` 时，`sshpass_provider` 必须是 `windows`
+  - `windows-msys` -> `os_type=windows`、`bash_flavor=msys`、`sshpass_provider=none`、`auth_mechanism=ssh_askpass`
+  - `linux-wsl` -> `os_type=linux`、`bash_flavor=wsl`、`sshpass_provider=linux`、`auth_mechanism=sshpass`
+  - `linux-native` -> `os_type=linux`、`bash_flavor=native`、`sshpass_provider=linux`、`auth_mechanism=sshpass`
+  - `macos-native` -> `os_type=macos`、`bash_flavor=native`、`sshpass_provider=linux`、`auth_mechanism=sshpass`
+- 当 `bash_flavor=msys` 时，`auth_mechanism` 必须是 `ssh_askpass`
+- 当 `bash_flavor=wsl` 或 `native` 时，`auth_mechanism` 必须是 `sshpass`
 - 当前执行环境与状态文件不一致时，状态视为过期，需要重新按真实环境复核
 
 ## 2. servers.json

@@ -54,19 +54,6 @@ convert_windows_path() {
   printf '%s\n' "$raw_path"
 }
 
-ensure_windows_bash_lc() {
-  if [ "$(current_runtime_type)" != "windows-msys" ]; then
-    return 0
-  fi
-
-  if [ "${REMOTE_BASH_LC:-}" = "1" ]; then
-    return 0
-  fi
-
-  log "windows-msys 执行环境下必须通过 bash -lc 调用 ${SCRIPT_NAME}。在 PowerShell 中请改用 skills/remote/scripts/remote.ps1。"
-  exit 12
-}
-
 python_cmd() {
   if command -v python3 >/dev/null 2>&1; then
     printf 'python3'
@@ -119,6 +106,11 @@ current_ssh_path() {
 }
 
 current_sshpass_path() {
+  if [ "$(current_runtime_type)" = "windows-msys" ]; then
+    printf '\n'
+    return 0
+  fi
+
   if has_cmd sshpass; then
     command -v sshpass
     return 0
@@ -132,7 +124,7 @@ current_sshpass_provider() {
 }
 
 current_windows_remote_ready() {
-  if [ "$(current_runtime_type)" = "windows-msys" ] && [ "${REMOTE_BASH_LC:-}" = "1" ]; then
+  if [ "$(current_runtime_type)" = "windows-msys" ]; then
     printf 'true\n'
   else
     printf 'false\n'
@@ -255,7 +247,10 @@ bootstrap_matches_runtime() {
   [ "$(read_bootstrap_field os_type)" = "$CURRENT_HOST_OS" ] || return 1
   [ "$(read_bootstrap_field bash_available)" = "$CURRENT_BASH_AVAILABLE" ] || return 1
   [ "$(read_bootstrap_field bash_flavor)" = "$CURRENT_BASH_FLAVOR" ] || return 1
-  [ "$(read_bootstrap_field sshpass_provider)" = "$CURRENT_SSHPASS_PROVIDER" ] || return 1
+  # Windows 使用 SSH_ASKPASS，不需要 sshpass_provider 匹配
+  if [ "$CURRENT_RUNTIME_TYPE" != "windows-msys" ]; then
+    [ "$(read_bootstrap_field sshpass_provider)" = "$CURRENT_SSHPASS_PROVIDER" ] || return 1
+  fi
 
   saved_bash_path="$(read_bootstrap_field bash_path)"
   if [ -n "$CURRENT_BASH_PATH" ] || [ -n "$saved_bash_path" ]; then
@@ -305,15 +300,21 @@ else:
     payload = {"skill_name": "remote"}
 
 payload["skill_name"] = "remote"
+is_windows = os.environ["CURRENT_HOST_OS"] == "windows"
 payload["sshpass_installed"] = os.environ["INSTALLED"] == "true"
 payload["sshpass_version"] = os.environ["VERSION"]
+payload["auth_mechanism"] = "ssh_askpass" if is_windows else "sshpass"
+payload["ssh_installed"] = True
 payload["os_type"] = os.environ["CURRENT_HOST_OS"]
 payload["runtime_type"] = os.environ["CURRENT_RUNTIME_TYPE"]
 payload["bash_available"] = os.environ["CURRENT_BASH_AVAILABLE"] == "true"
 payload["bash_flavor"] = os.environ["CURRENT_BASH_FLAVOR"]
 payload["bash_path"] = os.environ["CURRENT_BASH_PATH"]
 payload["sshpass_provider"] = os.environ["CURRENT_SSHPASS_PROVIDER"]
-payload["windows_remote_ready"] = os.environ["CURRENT_WINDOWS_REMOTE_READY"] == "true" and os.environ["INSTALLED"] == "true"
+if is_windows:
+    payload["windows_remote_ready"] = os.environ["CURRENT_WINDOWS_REMOTE_READY"] == "true"
+else:
+    payload["windows_remote_ready"] = os.environ["CURRENT_WINDOWS_REMOTE_READY"] == "true" and os.environ["INSTALLED"] == "true"
 payload["last_verified_at"] = now
 if os.environ["TOUCH_SETUP"] == "true":
     payload["last_setup_at"] = now
@@ -324,8 +325,26 @@ state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", 
 PY
 }
 
+ensure_ssh_windows() {
+  [ "$(current_runtime_type)" = "windows-msys" ] || return 0
+
+  local ssh_out
+  ssh_out="$(ssh -V 2>&1 || true)"
+  if [ -z "$ssh_out" ]; then
+    log "ssh -V 无输出，SSH 不可用。remote skill 终止。"
+    exit 13
+  fi
+}
+
 ensure_sshpass() {
   refresh_runtime_context
+
+  # Windows 使用 SSH_ASKPASS，不需要 sshpass
+  if [ "$CURRENT_RUNTIME_TYPE" = "windows-msys" ]; then
+    ensure_ssh_windows
+    write_bootstrap_state "false" "none" "false"
+    return 0
+  fi
 
   local bootstrap_present="false"
   local bootstrap_matches="false"
@@ -569,21 +588,32 @@ append_client_diagnostics() {
   {
     printf 'Client diagnostics:\n'
     printf 'runtime_type=%s\n' "$(current_runtime_type)"
-    printf 'sshpass_path=%s\n' "$(current_sshpass_path)"
+    if [ "$(current_runtime_type)" = "windows-msys" ]; then
+      printf 'auth_mechanism=ssh_askpass\n'
+    else
+      printf 'sshpass_path=%s\n' "$(current_sshpass_path)"
+    fi
     printf 'ssh_path=%s\n' "$(current_ssh_path)"
   } >>"$stderr_file"
 }
 
+# Windows: 使用 SSH_ASKPASS 机制自动提供密码
+run_with_askpass() {
+  local askpass_script
+  askpass_script="$(mktemp "${TMPDIR:-/tmp}/askpass.XXXXXX.sh")"
+  printf '#!/bin/bash\nprintf '"'"'%%s\\n'"'"' '"'"'%s'"'"'\n' "$CONNECTION_PASSWORD" > "$askpass_script"
+  chmod +x "$askpass_script"
+
+  local rc=0
+  DISPLAY=:0 SSH_ASKPASS="$askpass_script" SSH_ASKPASS_REQUIRE=force "$@" || rc=$?
+
+  rm -f "$askpass_script"
+  return "$rc"
+}
+
 run_noninteractive_sshpass() {
   if [ "$(current_runtime_type)" = "windows-msys" ]; then
-    env \
-      GIT_ASKPASS= \
-      SSH_ASKPASS= \
-      SSH_ASKPASS_REQUIRE=never \
-      DISPLAY= \
-      WAYLAND_DISPLAY= \
-      GCM_INTERACTIVE=never \
-      sshpass "$@"
+    run_with_askpass "$@"
     return $?
   fi
 
@@ -600,10 +630,19 @@ run_remote_command() {
   done < <(ssh_common_args)
 
   append_client_diagnostics "$stderr_file"
-  run_noninteractive_sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
+  if [ "$(current_runtime_type)" = "windows-msys" ]; then
+    run_with_askpass ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
+  else
+    run_noninteractive_sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
+  fi
 }
 
 update_bootstrap_verified_at() {
+  if [ "$(current_runtime_type)" = "windows-msys" ]; then
+    write_bootstrap_state "false" "none" "false"
+    return 0
+  fi
+
   local version="unknown"
   if probe_sshpass; then
     version="$PROBED_SSHPASS_VERSION"
@@ -648,10 +687,17 @@ render_failure_diagnosis() {
   fi
 
   if printf '%s' "$stderr_text" | grep -qi 'askpass'; then
-    printf '结论: 本地 SSH 交互链路未被正确抑制。\n'
-    printf '证据: SSH/Askpass 输出包含 askpass 相关提示。\n'
-    printf '推断: 当前环境可能把 Git for Windows 或其他 askpass 程序注入到了 SSH 调用链路。\n'
-    printf '下一步: 只通过 remote 标准主链修复本地非交互执行环境，不要手工输入密码或切换到裸 sshpass。\n'
+    if [ "$(current_runtime_type)" = "windows-msys" ]; then
+      printf '结论: SSH_ASKPASS 机制执行异常。\n'
+      printf '证据: SSH 输出包含 askpass 相关错误。\n'
+      printf '推断: 可能是 SSH_ASKPASS 脚本创建失败或环境变量未正确设置。\n'
+      printf '下一步: 检查 SSH 可用性，确认 SSH_ASKPASS_REQUIRE=force 生效。\n'
+    else
+      printf '结论: 本地 SSH 交互链路未被正确抑制。\n'
+      printf '证据: SSH/Askpass 输出包含 askpass 相关提示。\n'
+      printf '推断: 当前环境可能把 Git for Windows 或其他 askpass 程序注入到了 SSH 调用链路。\n'
+      printf '下一步: 只通过 remote 标准主链修复本地非交互执行环境，不要手工输入密码或切换到裸 sshpass。\n'
+    fi
     return 0
   fi
 
@@ -828,7 +874,6 @@ PYTHON_BIN="$(python_cmd)" || {
   exit 11
 }
 
-ensure_windows_bash_lc
 
 CLI_PORT=""
 CLI_USER=""
@@ -911,6 +956,7 @@ case "$ACTION" in
     exit 0
     ;;
   run)
+    ensure_ssh_windows
     ensure_sshpass
     if [ "$PARALLEL" -eq 1 ]; then
       [ "${#POSITIONAL[@]}" -ge 2 ] || {
