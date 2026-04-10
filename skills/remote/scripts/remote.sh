@@ -936,7 +936,6 @@ case "$ACTION" in
           exit 0
         fi
       else
-        local local_installed
         local_installed="$(read_bootstrap_field sshpass_installed)"
         if [ "$local_installed" = "true" ]; then
           log "bootstrap-state: ready (runtime=$CURRENT_RUNTIME_TYPE, auth=sshpass)"
