@@ -1,11 +1,6 @@
 # Remote 状态文件说明
 
-`remote` skill 的本地状态目录固定为：
-
-- Windows：`%LOCALAPPDATA%\remote\`
-- macOS / Linux：`${XDG_DATA_HOME:-$HOME/.local/share}/remote/`
-
-状态文件只写入宿主本地目录，不写入仓库。
+`remote` skill 的本地状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不需要关注具体路径。状态文件只写入宿主本地目录，不写入仓库。
 
 ## 1. bootstrap-state.json
 

@@ -891,6 +891,10 @@ while [ "$#" -gt 0 ]; do
       VERBOSE=1
       shift
       ;;
+    --check-bootstrap)
+      ACTION="check"
+      shift
+      ;;
     --save)
       ACTION="save"
       shift
@@ -923,6 +927,26 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$ACTION" in
+  check)
+    refresh_runtime_context
+    if load_bootstrap_state && bootstrap_matches_runtime; then
+      if [ "$CURRENT_RUNTIME_TYPE" = "windows-msys" ]; then
+        if [ "$(read_bootstrap_field windows_remote_ready)" = "true" ]; then
+          log "bootstrap-state: ready (runtime=$CURRENT_RUNTIME_TYPE, auth=ssh_askpass)"
+          exit 0
+        fi
+      else
+        local local_installed
+        local_installed="$(read_bootstrap_field sshpass_installed)"
+        if [ "$local_installed" = "true" ]; then
+          log "bootstrap-state: ready (runtime=$CURRENT_RUNTIME_TYPE, auth=sshpass)"
+          exit 0
+        fi
+      fi
+    fi
+    log "bootstrap-state: not ready or missing"
+    exit 1
+    ;;
   save)
     [ "${#POSITIONAL[@]}" -ge 1 ] || {
       usage

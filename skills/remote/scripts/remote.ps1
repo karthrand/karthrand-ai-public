@@ -17,6 +17,7 @@ function Parse-InvocationArguments {
     $parsed = [ordered]@{
         Save          = $false
         Show          = $false
+        CheckBootstrap = $false
         Parallel      = $false
         Verbose       = $false
         Address       = $null
@@ -30,7 +31,7 @@ function Parse-InvocationArguments {
     }
 
     $knownShortArgs = @(
-        '-Save', '-Show', '-Parallel', '-Verbose',
+        '-Save', '-Show', '-CheckBootstrap', '-Parallel', '-Verbose',
         '-Address', '-Port', '-Username', '-Password',
         '-Command', '-Commands'
     )
@@ -54,6 +55,9 @@ function Parse-InvocationArguments {
             }
             '-Show' {
                 $parsed.Show = $true
+            }
+            '-CheckBootstrap' {
+                $parsed.CheckBootstrap = $true
             }
             '-Parallel' {
                 $parsed.Parallel = $true
@@ -141,26 +145,30 @@ function Build-RemoteShArgs {
     }
 
     $hasModeCount = 0
-    foreach ($enabled in @($ParsedArgs.Save, $ParsedArgs.Show, $ParsedArgs.Parallel)) {
+    foreach ($enabled in @($ParsedArgs.Save, $ParsedArgs.Show, $ParsedArgs.CheckBootstrap, $ParsedArgs.Parallel)) {
         if ($enabled) {
             $hasModeCount++
         }
     }
     if ($hasModeCount -gt 1) {
-        throw "-Save、-Show、-Parallel 只能选择一种。"
-    }
-
-    if ([string]::IsNullOrWhiteSpace($ParsedArgs.Address)) {
-        throw "请提供 -Address。"
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Port)) {
-        if ($ParsedArgs.Port -notmatch '^[0-9]+$') {
-            throw "-Port 必须是数字。"
-        }
+        throw "-Save、-Show、-CheckBootstrap、-Parallel 只能选择一种。"
     }
 
     $translated = New-Object System.Collections.Generic.List[string]
+
+    if ($ParsedArgs.CheckBootstrap) {
+        # --check-bootstrap 不需要 -Address、-Port 等参数
+        $translated.Add("--check-bootstrap")
+    } else {
+        if ([string]::IsNullOrWhiteSpace($ParsedArgs.Address)) {
+            throw "请提供 -Address。"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Port)) {
+            if ($ParsedArgs.Port -notmatch '^[0-9]+$') {
+                throw "-Port 必须是数字。"
+            }
+        }
+    }
 
     if ($ParsedArgs.Save) {
         if ([string]::IsNullOrWhiteSpace($ParsedArgs.Username) -or [string]::IsNullOrWhiteSpace($ParsedArgs.Password)) {
@@ -193,13 +201,14 @@ function Build-RemoteShArgs {
             $translated.Add("--verbose")
         }
     } else {
-        if ($ParsedArgs.Commands.Count -gt 0) {
+        if ($ParsedArgs.CheckBootstrap) {
+            # 已在上方处理，无需额外参数
+        } elseif ($ParsedArgs.Commands.Count -gt 0) {
             throw "非并行模式下请使用 -Command，而不是 -Commands。"
-        }
-        if ([string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
+        } elseif ([string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
             throw "请提供 -Command，或改用旧版透传参数。"
         }
-        if ($ParsedArgs.Verbose) {
+        if (-not $ParsedArgs.CheckBootstrap -and $ParsedArgs.Verbose) {
             throw "-Verbose 仅在 -Parallel 模式下可用。"
         }
     }
@@ -217,15 +226,17 @@ function Build-RemoteShArgs {
         $translated.Add($ParsedArgs.Password)
     }
 
-    $translated.Add($ParsedArgs.Address)
+    if (-not $ParsedArgs.CheckBootstrap) {
+        $translated.Add($ParsedArgs.Address)
 
-    if ($ParsedArgs.Parallel) {
-        foreach ($command in $ParsedArgs.Commands) {
-            $translated.Add($command)
-        }
-    } elseif (-not $ParsedArgs.Show) {
-        if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
-            $translated.Add($ParsedArgs.Command)
+        if ($ParsedArgs.Parallel) {
+            foreach ($command in $ParsedArgs.Commands) {
+                $translated.Add($command)
+            }
+        } elseif (-not $ParsedArgs.Show) {
+            if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
+                $translated.Add($ParsedArgs.Command)
+            }
         }
     }
 

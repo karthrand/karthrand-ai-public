@@ -35,8 +35,9 @@ agent 不要靠口头约定或手工判断环境；必须复用标准脚本内�
 
 ## 状态目录
 
-- Windows：`%LOCALAPPDATA%\remote\`
-- macOS / Linux：`${XDG_DATA_HOME:-$HOME/.local/share}/remote/`
+状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不应直接拼接路径来读取 `bootstrap-state.json`。检查状态必须按执行环境选择对应命令：
+- `windows-msys`：`powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\remote.ps1 -CheckBootstrap`
+- `linux-wsl`、`linux-native`、`macos-native`：`bash ./skills/remote/scripts/remote.sh --check-bootstrap`
 
 setup 成功后写入：
 

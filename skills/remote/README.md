@@ -31,10 +31,7 @@ skills/remote/
 
 ## 状态目录
 
-- Windows：`%LOCALAPPDATA%\remote\`
-- macOS / Linux：`${XDG_DATA_HOME:-$HOME/.local/share}/remote/`
-
-其中包含：
+状态目录由脚本内部函数自动确定，不在此列出具体路径。其中包含：
 
 - `bootstrap-state.json`
 - `servers.json`

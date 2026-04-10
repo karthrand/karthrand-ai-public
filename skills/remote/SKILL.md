@@ -23,8 +23,11 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 
 ## 核心流程
 
-1. 先检查本地状态目录中的 `bootstrap-state.json`。
-2. 若状态文件缺失、显示未安装，或与当前执行环境不一致，必须读取 `references/setup.md`，并只通过标准脚本完成环境复核或 setup；不要手工探测认证工具或裸跑 SSH。
+1. 通过标准脚本检查 bootstrap 状态（不要直接读取或猜测状态文件路径）：
+   - `windows-msys`：`powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\remote.ps1 -CheckBootstrap`
+   - 其他环境：`bash ./skills/remote/scripts/remote.sh --check-bootstrap`
+   退出码 0 表示环境已就绪；退出码非 0 表示需要 setup。
+2. 若退出码非 0，必须读取 `references/setup.md`，并只通过标准脚本完成环境 setup；不要手工探测认证工具或裸跑 SSH。
 3. 再检查 `servers.json` 是否已有目标服务器记录。命中记录时直接复用；未命中记录时，立即向用户询问服务器地址、用户名、密码，端口默认 `22`。
 4. 标准入口固定如下：
    - `windows-msys`：通过 `scripts/remote.ps1` 与 `scripts/setup.ps1`
@@ -40,7 +43,7 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
 出现以下场景时再读对应文档：
 
 - 需要安装、修复或验证环境：`references/setup.md`
-- 需要确认本地状态目录、`bootstrap-state.json` 或 `servers.json` 的结构：`references/state.md`
+- 需要确认 `bootstrap-state.json` 或 `servers.json` 的结构（如调试状态不一致）：`references/state.md`
 - 需要执行诊断采集、并行命令或高风险判断边界：`references/remote-guidelines.md`
 
 ## 输出要求
