@@ -28,7 +28,7 @@ description: 当用户需要远程访问 Linux 服务器、复用本地保存的
    - 其他环境：`bash ./skills/remote/scripts/remote.sh --check-bootstrap`
    退出码 0 表示环境已就绪；退出码非 0 表示需要 setup。
 2. 若退出码非 0，必须读取 `references/setup.md`，并只通过标准脚本完成环境 setup；不要手工探测认证工具或裸跑 SSH。
-3. 再检查 `servers.json` 是否已有目标服务器记录。命中记录时直接复用；未命中记录时，立即向用户询问服务器地址、用户名、密码，端口默认 `22`。
+3. 再检查 `servers.json` 是否已有目标服务器记录：用 `-Show -Address <目标>` 查找特定服务器，或用 `-Show`（不带地址）列出所有已保存记录。命中记录时直接复用；未命中记录时，立即向用户询问服务器地址、用户名、密码，端口默认 `22`。
 4. 标准入口固定如下：
    - `windows-msys`：通过 `scripts/remote.ps1` 与 `scripts/setup.ps1`
    - `linux-wsl`、`linux-native`、`macos-native`：通过 `scripts/remote.sh` 与 `scripts/setup.sh`

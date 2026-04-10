@@ -159,6 +159,9 @@ function Build-RemoteShArgs {
     if ($ParsedArgs.CheckBootstrap) {
         # --check-bootstrap 不需要 -Address、-Port 等参数
         $translated.Add("--check-bootstrap")
+    } elseif ($ParsedArgs.Show) {
+        # --show 不需要 -Address（无地址时列出所有已保存服务器）
+        $translated.Add("--show")
     } else {
         if ([string]::IsNullOrWhiteSpace($ParsedArgs.Address)) {
             throw "请提供 -Address。"
@@ -186,8 +189,6 @@ function Build-RemoteShArgs {
         if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command) -or $ParsedArgs.Commands.Count -gt 0) {
             throw "-Show 不允许同时提供 -Command 或 -Commands。"
         }
-
-        $translated.Add("--show")
     } elseif ($ParsedArgs.Parallel) {
         if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
             throw "-Parallel 模式下请只使用 -Commands。"
@@ -227,15 +228,21 @@ function Build-RemoteShArgs {
     }
 
     if (-not $ParsedArgs.CheckBootstrap) {
-        $translated.Add($ParsedArgs.Address)
+        if (-not $ParsedArgs.Show -or -not [string]::IsNullOrWhiteSpace($ParsedArgs.Address)) {
+            $translated.Add($ParsedArgs.Address)
+        }
 
         if ($ParsedArgs.Parallel) {
             foreach ($command in $ParsedArgs.Commands) {
-                $translated.Add($command)
+                $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($command))
+                $translated.Add("--command-base64")
+                $translated.Add($encoded)
             }
-        } elseif (-not $ParsedArgs.Show) {
+        } elseif (-not $ParsedArgs.Show -and -not $ParsedArgs.Save) {
             if (-not [string]::IsNullOrWhiteSpace($ParsedArgs.Command)) {
-                $translated.Add($ParsedArgs.Command)
+                $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($ParsedArgs.Command))
+                $translated.Add("--command-base64")
+                $translated.Add($encoded)
             }
         }
     }

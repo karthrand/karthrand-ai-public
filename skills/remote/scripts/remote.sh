@@ -21,7 +21,7 @@ usage() {
 用法：
   remote.sh --save "<address>" --user "<username>" --password "<password>" [--port 22]
   remote.sh --save "<address>" "<command>" --user "<username>" --password "<password>" [--port 22]
-  remote.sh --show "<address>" [--port 22]
+  remote.sh --show "[<address>]" [--port 22]
   remote.sh "<address>" "<command>"
   remote.sh --parallel "<address>" "<cmd1>" "<cmd2>" ...
   remote.sh --parallel -v "<address>" "<cmd1>" "<cmd2>" ...
@@ -485,6 +485,26 @@ raise SystemExit(4)
 PY
 }
 
+list_all_server_records() {
+  SERVERS_STATE_FILE="$(servers_state_file)" \
+  "$PYTHON_BIN" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+state_file = Path(os.environ["SERVERS_STATE_FILE"])
+if not state_file.exists():
+    raise SystemExit(3)
+
+data = json.loads(state_file.read_text(encoding="utf-8-sig"))
+servers = data.get("servers", [])
+if not servers:
+    raise SystemExit(4)
+
+print(json.dumps(data, ensure_ascii=False, indent=2))
+PY
+}
+
 load_server_record() {
   local address="$1"
   local port="$2"
@@ -632,9 +652,9 @@ run_remote_command() {
 
   append_client_diagnostics "$stderr_file"
   if [ "$(current_runtime_type)" = "windows-msys" ]; then
-    run_with_askpass ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
+    printf '%s\n' "$command_text" | run_with_askpass ssh "${ssh_args[@]}" "$CONNECTION_TARGET" 'bash -s' >"$stdout_file" 2>>"$stderr_file"
   else
-    run_noninteractive_sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" "$command_text" >"$stdout_file" 2>>"$stderr_file"
+    printf '%s\n' "$command_text" | run_noninteractive_sshpass -p "$CONNECTION_PASSWORD" ssh "${ssh_args[@]}" "$CONNECTION_TARGET" 'bash -s' >"$stdout_file" 2>>"$stderr_file"
   fi
 }
 
@@ -915,6 +935,10 @@ while [ "$#" -gt 0 ]; do
       CLI_PASSWORD="$2"
       shift 2
       ;;
+    --command-base64)
+      POSITIONAL+=("$(printf '%s' "$2" | base64 -d)")
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -981,15 +1005,18 @@ case "$ACTION" in
     fi
     ;;
   show)
-    [ "${#POSITIONAL[@]}" -ge 1 ] || {
-      usage
-      exit 2
-    }
-    parse_target "${POSITIONAL[0]}"
-    [ -n "$CLI_PORT" ] || CLI_PORT="$DEFAULT_PORT"
-    if ! show_server_record "$PARSED_ADDRESS" "$CLI_PORT"; then
-      log "未找到服务器记录：${PARSED_ADDRESS}:${CLI_PORT}"
-      exit 21
+    if [ "${#POSITIONAL[@]}" -ge 1 ]; then
+      parse_target "${POSITIONAL[0]}"
+      [ -n "$CLI_PORT" ] || CLI_PORT="$DEFAULT_PORT"
+      if ! show_server_record "$PARSED_ADDRESS" "$CLI_PORT"; then
+        log "未找到服务器记录：${PARSED_ADDRESS}:${CLI_PORT}"
+        exit 21
+      fi
+    else
+      if ! list_all_server_records; then
+        log "未找到任何已保存的服务器记录"
+        exit 21
+      fi
     fi
     exit 0
     ;;
