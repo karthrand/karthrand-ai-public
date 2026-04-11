@@ -20,7 +20,13 @@ description: 当用户要求搜索技术文档、查代码示例、查网页资�
 
 ## 核心流程
 
-1. 使用时的第一个步骤，固定先检查 setup 状态文件；如果状态缺失、未完成、与真实环境不一致，或者任一必需 MCP 不可用，立即转 `references/setup.md`。**进入 setup 前，先检查状态文件 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：`hasApiKey=false` 且 `apiKey=null` 时依次询问用户是否配置 Key，配置后写入状态文件，后续不再询问。**
+1. 使用时的第一个步骤，固定先检查 setup 状态文件。运行 `bash scripts/detect.sh agent` 获取当前 agent 类型，读取状态文件中 `agents.{当前agent类型}` 节。**以下任一条件命中时，必须立即停止当前搜索任务（不得执行步骤 2-9），转 `references/setup.md`：**
+   - 状态文件不存在
+   - 当前 agent 在 `agents` 中无记录（首次使用）
+   - `agents.{当前agent}.items` 中任一 MCP 的 `installed != true`
+   - 任一必需 MCP 不可用或连接失败
+   **禁止在 MCP 缺失时用替代工具降级执行搜索任务。**
+   **进入 setup 前，先检查状态文件顶层 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：`hasApiKey=false` 且 `apiKey=null` 时依次询问用户是否配置 Key，配置后写入状态文件，后续不再询问。**
 2. setup 状态通过后，再判断问题是否属于精确配置项、阈值、开关、`flag`、`option`、`parameter`、`env` 一类问题。
 3. 命中配置项类问题时，先读 `references/strategies/config-index-shortcut.md`，优先定位官方配置索引入口。
 4. 技术文档问题先走 `Context7`，固定顺序是先 `resolve-library-id` 再 `query-docs`；详细模板和错误示例看 `examples/usage.md`。
@@ -51,7 +57,7 @@ description: 当用户要求搜索技术文档、查代码示例、查网页资�
 
 如果示例文档与正文流程冲突，以本文件为准。
 
-首次使用，或者遇到状态文件缺失、状态与真实环境不一致、`Context7` / `Exa` / `DeepWiki` / `github-fetcher` 未注册或连接失败时，读 `references/setup.md`。
+首次使用，或者遇到状态文件缺失、当前 agent 在 `agents` 中无记录、`agents.{当前agent}.items` 中任一 MCP 未标记为已安装、`Context7` / `Exa` / `DeepWiki` / `github-fetcher` 未注册或连接失败时，读 `references/setup.md`。
 
 需要标准输出模板、来源标注规则或 Markdown 结构约束时，读 `references/rules/output-format.md`。
 

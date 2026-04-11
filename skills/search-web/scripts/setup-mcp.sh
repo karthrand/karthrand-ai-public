@@ -5,6 +5,7 @@
 #   bash scripts/setup-mcp.sh --mcp context7
 #   bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=xxx"
 #   bash scripts/setup-mcp.sh --mcp github-fetcher --force
+#   bash scripts/setup-mcp.sh --mcp all
 #   bash scripts/setup-mcp.sh --agent claude-code --os windows --mcp context7
 #
 # 必需文件: scripts/detect.sh (同目录下)
@@ -24,6 +25,7 @@ MCP_NAME=""
 API_KEY=""
 SCOPE="user"
 FORCE=0
+ALL_MCP_LIST="context7 exa mcp-deepwiki github-fetcher"
 
 usage() {
   cat <<'EOF'
@@ -36,8 +38,8 @@ search-web 技能 MCP 自动安装脚本
                     不传则自动调用 detect.sh agent 检测
   --os <类型>        目标运行时 OS (windows|linux|macos)
                     不传则自动调用 detect.sh os 检测
-  --mcp <名称>      MCP 名称 (context7|exa|mcp-deepwiki|github-fetcher)
-                    必需参数
+  --mcp <名称>      MCP 名称 (context7|exa|mcp-deepwiki|github-fetcher|all)
+                    必需参数；all 表示安装全部四项
   --api-key <值>     API Key，格式 "ENV_VAR_NAME=value"
                     仅 context7/exa 可选
   --scope <范围>     安装作用域 (user|project)，默认 user
@@ -48,6 +50,7 @@ search-web 技能 MCP 自动安装脚本
   bash scripts/setup-mcp.sh --mcp context7
   bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=xxx"
   bash scripts/setup-mcp.sh --mcp github-fetcher --force
+  bash scripts/setup-mcp.sh --mcp all
   bash scripts/setup-mcp.sh --agent claude-code --os windows --mcp context7
 EOF
 }
@@ -89,8 +92,8 @@ is_remote_mcp() {
 }
 
 case "$MCP_NAME" in
-  context7|mcp-deepwiki|github-fetcher|exa) ;;
-  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher）" >&2; exit 1 ;;
+  context7|mcp-deepwiki|github-fetcher|exa|all) ;;
+  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1 ;;
 esac
 
 # ==============================================================================
@@ -150,16 +153,18 @@ except: pass
 
 STATE_FILE="${STATE_DIR}setup-state.json"
 
-# 检查指定 MCP 在状态文件中是否已标记为已安装
+# 检查指定 MCP 在当前 agent 的状态文件中是否已标记为已安装
 is_mcp_installed() {
   local mcp="$1"
   local state_file="$2"
+  local agent_type="$3"
   [ -f "$state_file" ] || return 1
-  _SF="$state_file" _M="$mcp" python3 -c "
+  _SF="$state_file" _M="$mcp" _A="$agent_type" python3 -c "
 import json, os, sys
 try:
     data = json.load(open(os.environ['_SF']))
-    for item in data.get('items', []):
+    items = data.get('agents', {}).get(os.environ['_A'], {}).get('items', [])
+    for item in items:
         if item.get('name') == os.environ['_M'] and item.get('installed') is True:
             sys.exit(0)
 except Exception:
@@ -168,7 +173,7 @@ sys.exit(1)
 " 2>/dev/null
 }
 
-# 安装成功后更新状态文件
+# 安装成功后更新状态文件（多 agent 并存架构）
 update_state_file() {
   local mcp="$1"
   local state_file="$2"
@@ -190,37 +195,56 @@ try:
     else:
         os.makedirs(os.path.dirname(state_file), exist_ok=True)
         data = {
-            'version': 2, 'updatedAt': '', 'runtime': {},
-            'stateDir': os.path.dirname(state_file).replace(os.sep, '/') + '/',
+            'version': 3, 'updatedAt': '', 'stateDir': '',
             'credentials': {
                 'context7': {'hasApiKey': False, 'apiKey': None},
                 'exa': {'hasApiKey': False, 'apiKey': None}
             },
-            'items': []
+            'agents': {}
         }
+
+    # v2 -> v3 迁移：将旧 runtime/items 移入 agents
+    if data.get('version', 2) < 3:
+        old_runtime = data.get('runtime', {})
+        old_agent = old_runtime.get('agentType', '')
+        old_items = data.get('items', [])
+        if old_agent and old_items:
+            data.setdefault('agents', {})[old_agent] = {
+                'osType': old_runtime.get('osType', ''),
+                'detectionSource': old_runtime.get('detectionSource', ''),
+                'items': old_items
+            }
+        data.pop('runtime', None)
+        data.pop('items', None)
+        data['version'] = 3
 
     now = datetime.now(timezone.utc).isoformat()
     data['updatedAt'] = now
+    if not data.get('stateDir'):
+        data['stateDir'] = os.path.dirname(state_file).replace(os.sep, '/') + '/'
 
-    if not data.get('runtime', {}).get('agentType'):
-        data['runtime'] = {
-            'agentType': agent_type, 'osType': os_type,
-            'detectionSource': 'session_env'
+    # 确保 agents.{agent_type} 存在
+    agents = data.setdefault('agents', {})
+    if agent_type not in agents:
+        agents[agent_type] = {
+            'osType': os_type,
+            'detectionSource': 'session_env',
+            'items': []
         }
 
+    # 更新当前 agent 的 items
     found = False
-    for item in data.get('items', []):
+    for item in agents[agent_type].get('items', []):
         if item.get('name') == mcp_name:
             item['installed'] = True
-            item['host'] = agent_type
             item['verifiedAt'] = now
             item['lastError'] = ''
             found = True
             break
 
     if not found:
-        data.setdefault('items', []).append({
-            'name': mcp_name, 'type': 'mcp', 'host': agent_type,
+        agents[agent_type].setdefault('items', []).append({
+            'name': mcp_name, 'type': 'mcp',
             'installed': True, 'verifiedAt': now, 'lastError': ''
         })
 
@@ -233,7 +257,7 @@ except Exception as e:
 }
 
 if [ "$FORCE" -eq 0 ]; then
-  if is_mcp_installed "$MCP_NAME" "$STATE_FILE"; then
+  if is_mcp_installed "$MCP_NAME" "$STATE_FILE" "$AGENT"; then
     echo "MCP $MCP_NAME 已标记为已安装。使用 --force 强制重新安装。"
     exit 0
   fi
@@ -374,23 +398,42 @@ install_remote_mcp() {
 # 执行
 # ==============================================================================
 
-echo "========================================"
-echo "  安装 MCP: $MCP_NAME"
-echo "  Agent: $AGENT"
-echo "  OS: $OS_TYPE"
-echo "  Scope: $SCOPE"
-echo "========================================"
+run_install() {
+  local mcp="$1"
+  echo "========================================"
+  echo "  安装 MCP: $mcp"
+  echo "  Agent: $AGENT"
+  echo "  OS: $OS_TYPE"
+  echo "  Scope: $SCOPE"
+  echo "========================================"
 
-install_mcp "$MCP_NAME" "$AGENT" "$OS_TYPE"
+  install_mcp "$mcp" "$AGENT" "$OS_TYPE"
 
-# 安装成功后更新状态文件
-if update_state_file "$MCP_NAME" "$STATE_FILE" "$AGENT" "$OS_TYPE"; then
+  # 安装成功后更新状态文件
+  if update_state_file "$mcp" "$STATE_FILE" "$AGENT" "$OS_TYPE"; then
+    echo ""
+    echo "MCP $mcp 安装命令已执行，状态文件已更新。"
+  else
+    echo ""
+    echo "MCP $mcp 安装命令已执行，但状态文件更新失败。"
+    echo "请在 code agent 中重新进入 search-web 主流程以更新状态。"
+  fi
+}
+
+if [ "$MCP_NAME" = "all" ]; then
+  echo "批量安装模式：将安装全部四项 MCP"
   echo ""
-  echo "MCP $MCP_NAME 安装命令已执行，状态文件已更新。"
+  for mcp in $ALL_MCP_LIST; do
+    if [ "$FORCE" -eq 0 ] && is_mcp_installed "$mcp" "$STATE_FILE" "$AGENT"; then
+      echo "MCP $mcp 已标记为已安装，跳过。"
+      echo ""
+    else
+      run_install "$mcp"
+      echo ""
+    fi
+  done
+  echo "批量安装完成。请重启 code agent 后验证 MCP 是否可用。"
 else
-  echo ""
-  echo "MCP $MCP_NAME 安装命令已执行，但状态文件更新失败。"
-  echo "请在 code agent 中重新进入 search-web 主流程以更新状态。"
+  run_install "$MCP_NAME"
+  echo "请重启 code agent 后验证 MCP 是否可用。"
 fi
-
-echo "请重启 code agent 后验证 MCP 是否可用。"
