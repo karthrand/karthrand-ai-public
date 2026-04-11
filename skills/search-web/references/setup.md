@@ -64,10 +64,10 @@
 5. 检查 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：
    - 如果 `credentials.context7.hasApiKey === false` 且 `apiKey === null`：询问用户"是否配置 Context7 API Key？"
      - 用户选择配置 → 记录 Key 到 `credentials.context7.apiKey`，设 `hasApiKey=true`
-     - 用户选择跳过 → 保留 `hasApiKey=false`，不再后续询问
+     - 用户选择跳过 → 保留 `hasApiKey=false`，写入 `apiKey="skipped"`，不再后续询问
    - 如果 `credentials.exa.hasApiKey === false` 且 `apiKey === null`：询问用户"是否配置 Exa API Key？"
      - 用户选择配置 → 记录 Key 到 `credentials.exa.apiKey`，设 `hasApiKey=true`
-     - 用户选择跳过 → 保留 `hasApiKey=false`，不再后续询问
+     - 用户选择跳过 → 保留 `hasApiKey=false`，写入 `apiKey="skipped"`，不再后续询问
 6. 读取状态后，逐项真实检测 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已经注册可用；不能只看状态文件，也不能只看本机是否装过某个命令。
 7. 四项都可用时，更新状态后立即停止，不重复 setup。
 8. 任一项缺失、未注册、连接失败或状态失真时，进入对应项的 setup / repair。
@@ -141,7 +141,7 @@
 ### credentials 固定规则
 
 - `hasApiKey=false` 且 `apiKey=null`：未配置，进入 setup 前需询问
-- `hasApiKey=false` 且 `apiKey` 非空：用户曾明确跳过，不再询问（此状态不使用，跳过时保持 null）
+- `hasApiKey=false` 且 `apiKey="skipped"`：用户曾明确跳过，不再询问
 - `hasApiKey=true` 且 `apiKey` 有值：已配置，安装 MCP 时自动从状态文件读取注入
 - Key 存储在 `~/.config/search-web/setup-state.json`，内部 skill 不考虑安全问题
 - 多 code agent 共享同一状态文件，只需询问一次 Key

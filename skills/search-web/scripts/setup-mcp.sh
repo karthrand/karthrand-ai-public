@@ -145,17 +145,97 @@ except: pass
 }
 
 # ==============================================================================
-# 状态检查
+# 状态检查与更新
 # ==============================================================================
 
 STATE_FILE="${STATE_DIR}setup-state.json"
 
-if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
-  if grep -q "\"$MCP_NAME\"" "$STATE_FILE" 2>/dev/null; then
-    if grep -q '"installed"[[:space:]]*:[[:space:]]*true' "$STATE_FILE" 2>/dev/null; then
-      echo "MCP $MCP_NAME 已标记为已安装。使用 --force 强制重新安装。"
-      exit 0
-    fi
+# 检查指定 MCP 在状态文件中是否已标记为已安装
+is_mcp_installed() {
+  local mcp="$1"
+  local state_file="$2"
+  [ -f "$state_file" ] || return 1
+  _SF="$state_file" _M="$mcp" python3 -c "
+import json, os, sys
+try:
+    data = json.load(open(os.environ['_SF']))
+    for item in data.get('items', []):
+        if item.get('name') == os.environ['_M'] and item.get('installed') is True:
+            sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+" 2>/dev/null
+}
+
+# 安装成功后更新状态文件
+update_state_file() {
+  local mcp="$1"
+  local state_file="$2"
+  local agent_type="$3"
+  local os_type="$4"
+  _SF="$state_file" _M="$mcp" _A="$agent_type" _O="$os_type" python3 -c "
+import json, os, sys
+from datetime import datetime, timezone
+
+state_file = os.environ['_SF']
+mcp_name = os.environ['_M']
+agent_type = os.environ['_A']
+os_type = os.environ['_O']
+
+try:
+    if os.path.exists(state_file):
+        with open(state_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    else:
+        os.makedirs(os.path.dirname(state_file), exist_ok=True)
+        data = {
+            'version': 2, 'updatedAt': '', 'runtime': {},
+            'stateDir': os.path.dirname(state_file).replace(os.sep, '/') + '/',
+            'credentials': {
+                'context7': {'hasApiKey': False, 'apiKey': None},
+                'exa': {'hasApiKey': False, 'apiKey': None}
+            },
+            'items': []
+        }
+
+    now = datetime.now(timezone.utc).isoformat()
+    data['updatedAt'] = now
+
+    if not data.get('runtime', {}).get('agentType'):
+        data['runtime'] = {
+            'agentType': agent_type, 'osType': os_type,
+            'detectionSource': 'session_env'
+        }
+
+    found = False
+    for item in data.get('items', []):
+        if item.get('name') == mcp_name:
+            item['installed'] = True
+            item['host'] = agent_type
+            item['verifiedAt'] = now
+            item['lastError'] = ''
+            found = True
+            break
+
+    if not found:
+        data.setdefault('items', []).append({
+            'name': mcp_name, 'type': 'mcp', 'host': agent_type,
+            'installed': True, 'verifiedAt': now, 'lastError': ''
+        })
+
+    with open(state_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+except Exception as e:
+    print(f'状态文件更新失败: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null
+}
+
+if [ "$FORCE" -eq 0 ]; then
+  if is_mcp_installed "$MCP_NAME" "$STATE_FILE"; then
+    echo "MCP $MCP_NAME 已标记为已安装。使用 --force 强制重新安装。"
+    exit 0
   fi
 fi
 
@@ -303,8 +383,14 @@ echo "========================================"
 
 install_mcp "$MCP_NAME" "$AGENT" "$OS_TYPE"
 
-echo ""
-echo "MCP $MCP_NAME 安装命令已执行。"
+# 安装成功后更新状态文件
+if update_state_file "$MCP_NAME" "$STATE_FILE" "$AGENT" "$OS_TYPE"; then
+  echo ""
+  echo "MCP $MCP_NAME 安装命令已执行，状态文件已更新。"
+else
+  echo ""
+  echo "MCP $MCP_NAME 安装命令已执行，但状态文件更新失败。"
+  echo "请在 code agent 中重新进入 search-web 主流程以更新状态。"
+fi
+
 echo "请重启 code agent 后验证 MCP 是否可用。"
-echo ""
-echo "如需更新状态文件，请在 code agent 中重新进入 search-web 主流程。"
