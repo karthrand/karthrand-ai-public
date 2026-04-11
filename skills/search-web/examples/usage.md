@@ -15,45 +15,54 @@
 
 ```mermaid
 graph TD
-    A[用户查询] --> B[先检查状态文件]
-    B --> C{必需 MCP 都可用?}
-    C -->|否| D[进入 setup 或 repair]
-    C -->|是| E{配置项类问题?}
-    D --> B
-    E -->|是| F[先读配置索引策略]
-    E -->|否| G{技术文档查询?}
-    F --> G
-    G -->|是| H[Context7]
-    G -->|否| I[Exa]
-    H --> I
-    I --> J{命中类型}
-    J -->|网页正文| K[已知 URL 后正文读取]
-    J -->|GitHub 仓库| L[DeepWiki]
-    J -->|普通网页| M[整理搜索结果]
-    K --> N[整合回答]
-    L --> N
-    M --> N
+    A[用户查询] --> B[先检查 setup-state.json]
+    B --> C{credentials 需询问?}
+    C -->|是| C1[依次询问 context7/exa Key]
+    C1 --> B
+    C -->|否| D{必需 MCP 都可用?}
+    D -->|否| E[进入 setup 或 repair]
+    E --> D
+    D -->|是| F{配置项类问题?}
+    F -->|是| G[先读配置索引策略]
+    F -->|否| H{技术文档查询?}
+    G --> H
+    H -->|是| I[Context7]
+    H -->|否| J[Exa]
+    I --> J
+    J --> K{命中类型}
+    K -->|网页正文| L[已知 URL 后正文读取]
+    K -->|GitHub 文档| M[DeepWiki]
+    K -->|GitHub 文件| N[github-fetcher]
+    K -->|普通网页| O[整理搜索结果]
+    L --> P[整合回答]
+    M --> P
+    N --> P
+    O --> P
 ```
 
 固定规则：
 
 1. 使用时先检查状态文件和真实环境
-2. `Context7`、`Exa`、`DeepWiki` 任一缺失都先修复
+2. `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一缺失都先修复
 3. 技术文档问题先走 `Context7`
 4. 联网搜索固定只用 `Exa`，不得切换其他搜索型 MCP
 5. `Context7` 之后仍继续走 `Exa`
-6. 命中 GitHub 仓库时优先走 `DeepWiki`
+6. 命中 GitHub 仓库文档时走 `DeepWiki`，需要读取仓库文件或目录时走 `github-fetcher`
 7. 网页正文读取只允许发生在“已知 URL 的非搜索读取”阶段，不能替代 `Exa`
 
 ## 首次使用示例
 
 ```text
-1. 先运行 sh scripts/detect-agent.sh
+1. 先运行 bash scripts/detect.sh agent
 2. 如果结果是 unknown，立即停止 setup 并说明无法识别当前宿主
-3. 再读取 bootstrap-state.json
-4. 逐项复验 context7、exa、mcp-deepwiki
-5. 如果任一项缺失，立即进入 references/setup.md
-6. 所有必需项通过后，才开始正式搜索
+3. 再运行 bash scripts/detect.sh os 获取运行时 OS
+4. 再运行 bash scripts/detect.sh state-dir search-web 获取状态目录
+5. 读取 setup-state.json，检查 credentials 节
+6. 如果 credentials.context7.hasApiKey=false 且 apiKey=null，询问是否配置 Context7 Key
+7. 如果 credentials.exa.hasApiKey=false 且 apiKey=null，询问是否配置 Exa Key
+8. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
+9. 如果任一项缺失，立即进入 references/setup.md
+10. 所有必需项通过后，才开始正式搜索
 ```
 
 ## Context7 文档搜索
@@ -213,12 +222,41 @@ parameters:
   verbose: true
 ```
 
+## GitHub 仓库文件与目录读取
+
+### 示例 1：读取仓库文件
+
+```yaml
+tool: mcp__github-fetcher__fetch-file
+parameters:
+  ownerName: "vercel"
+  repoName: "next.js"
+  filePath: "package.json"
+```
+
+### 示例 2：读取目录结构
+
+```yaml
+tool: mcp__github-fetcher__fetch-sub-tree
+parameters:
+  ownerName: "vitejs"
+  repoName: "vite"
+  dirPath: "packages/vite/src"
+  maxDepth: 2
+```
+
+### DeepWiki 与 github-fetcher 的协作
+
+- `DeepWiki` 负责仓库级别的文档概览和深读（`deepwiki_fetch`）
+- `github-fetcher` 负责读取仓库中具体文件内容和目录结构（`fetch-file`、`fetch-sub-tree`、`fetch-subdir-tree`）
+- 两者互补，不互相替代
+
 ## 完整示例
 
 ### 示例 1：技术文档 + 网页补充
 
 ```yaml
-# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -242,7 +280,7 @@ parameters:
 ### 示例 2：最新资讯
 
 ```yaml
-# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -265,7 +303,7 @@ parameters:
 ### 示例 3：文档 + 仓库联合分析
 
 ```yaml
-# 前置检查：已通过 sh scripts/detect-agent.sh 唯一确认当前宿主，且 bootstrap-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -295,14 +333,14 @@ parameters:
 ### 示例 4：首次使用时先修复依赖
 
 ```text
-当前状态：bootstrap-state.json 不存在，或其中的 context7 / exa / mcp-deepwiki 任一未通过
+当前状态：setup-state.json 不存在，或其中的 context7 / exa / mcp-deepwiki 任一未通过
 处理方式：先进入 references/setup.md 完成 setup，再返回主流程
 ```
 
 ### 示例 5：宿主信号冲突时停止
 
 ```text
-当前状态：`sh scripts/detect-agent.sh` 返回 `unknown`
+当前状态：`bash scripts/detect.sh agent` 返回 `unknown`
 处理方式：直接返回 unknown，不继续猜配置路径，也不开始 setup
 ```
 
@@ -324,8 +362,9 @@ parameters:
 ### Q3：GitHub 仓库查询失败怎么办？
 
 ```text
-如果是 mcp-deepwiki 缺失或环境错误，先回到 references/setup.md 修复。
+如果是 mcp-deepwiki 或 github-fetcher 缺失或环境错误，先回到 references/setup.md 修复。
 如果环境正常但仓库不可达，直接说明仓库可能私有、已删除或当前网络不可达，不把失败包装成已读取成功。
+github-fetcher 读取失败时不要回退到 DeepWiki 替代文件读取，反之亦然。
 ```
 
 ### Q4：`Exa` 不可用时能不能换别的搜索 MCP？
@@ -346,3 +385,6 @@ parameters:
 | `mcp__exa__get_code_context_exa` | 代码与技术资料搜索 | `query`, `numResults` |
 | `mcp__fetch__fetch` | 获取已知 URL 的网页正文，不参与搜索 | `url`, `max_length`, `raw` |
 | `mcp__mcp-deepwiki__deepwiki_fetch` | GitHub 仓库查询 | `url`, `maxDepth`, `mode` |
+| `mcp__github-fetcher__fetch-file` | 读取 GitHub 仓库文件 | `ownerName`, `repoName`, `filePath` |
+| `mcp__github-fetcher__fetch-sub-tree` | 读取 GitHub 仓库目录结构 | `ownerName`, `repoName`, `dirPath`, `maxDepth` |
+| `mcp__github-fetcher__fetch-subdir-tree` | 读取 GitHub 仓库子目录 | `ownerName`, `repoName`, `dirPath` |
