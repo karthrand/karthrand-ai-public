@@ -28,8 +28,11 @@ git config --global https.https://github.com.proxy http://127.0.0.1:7890
 ```bash
 npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skill <skill-name>
 ```
+ - `-g`: 全局安装
+ - `-y`: 静默安装
+ - `--skill`: 指定 Skill 名称
 
-示例：安装所有 Skill
+**示例：安装所有 Skill**
 
 ```bash
 npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skill mindmap
@@ -49,6 +52,19 @@ npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skil
 
 ```bash
 npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skill search-web
+```
+
+### 更新
+- 检查更新
+
+```bash
+npx skills check
+```
+
+- 更新
+
+```bash
+npx skills update
 ```
 
 ## 目录结构
