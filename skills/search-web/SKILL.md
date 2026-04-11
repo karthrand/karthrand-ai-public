@@ -1,6 +1,6 @@
 ---
 name: search-web
-description: 当用户要求搜索技术文档、查代码示例、查网页资料或查看 GitHub 仓库信息时使用。
+description: Use when searching library docs, API reference, code examples, npm packages, framework guides, or GitHub repos (README, source code, directory structure). Triggers: "how to use X", "X documentation", "X API", "npm package X", "GitHub repo X", Context7 rate limit exceeded, documentation outdated, tool not found, library version mismatch. Covers Context7, Exa, DeepWiki, github-fetcher. 当用户要求搜索技术文档、查代码示例、查网页资料、查看 GitHub 仓库信息、查 API 参考、查 npm 包用法、查框架指南时使用。
 ---
 
 # Search-Web 技能
@@ -9,42 +9,68 @@ description: 当用户要求搜索技术文档、查代码示例、查网页资�
 
 用最小搜索链路整合 `Context7`、`Exa`、网页正文读取、`DeepWiki` 和 `github-fetcher`。先确认必需 MCP 已可用，再拿官方文档、网页资料和仓库信息，避免首次使用时直接撞上工具缺失。
 
+原则：每类搜索目标只有唯一 MCP，不允许降级替代。
+
 ## 何时使用
 
-- 查询库、框架、SDK 或语言的官方文档
-- 查找代码示例、教程、博客文章或最新网页资料
-- 读取指定网页正文
-- 查看 GitHub 仓库结构、文档或源码入口
+- 查询库、框架、SDK 或语言的官方文档（library docs, API reference, framework guides）
+- 查找代码示例、教程、博客文章或最新网页资料（code examples, npm packages）
+- 读取指定网页正文（仅在已知 URL 后）
+- 查看 GitHub 仓库结构、文档、源码入口（README, source code, directory structure）
 - 读取 GitHub 仓库中的具体文件或目录结构
-- 不适用于纯本地代码检索或无需联网的普通问答
+- 遇到 `library not found`、`rate limit`、`documentation outdated` 需要查最新资料时
+
+## 何时不使用
+
+- 纯本地代码检索或无需联网的普通问答
+- 需要直接执行代码、运行测试或调试业务逻辑
+- 已有完整本地文档且无需联网验证
+- 需要修改、重构代码（refactoring）
+
+## MCP 快速参考
+
+| 搜索目标 | MCP | 固定规则 |
+|---------|-----|---------|
+| 技术文档 | Context7 | 先 `resolve-library-id` 再 `query-docs`，每问题≤3次 |
+| 网络搜索 | Exa | 唯一指定，不可替代 |
+| GitHub 仓库文档 | mcp-deepwiki | 仓库级文档概览和深读 |
+| GitHub 文件/目录 | github-fetcher | 具体文件或目录结构 |
+| 网页正文 | 宿主读取工具 | 仅已知 URL 后使用 |
 
 ## 核心流程
 
-1. 使用时的第一个步骤，固定先检查 setup 状态文件。运行 `bash scripts/detect.sh agent` 获取当前 agent 类型，读取状态文件中 `agents.{当前agent类型}` 节。**以下任一条件命中时，必须立即停止当前搜索任务（不得执行步骤 2-9），转 `references/setup.md`：**
+1. 使用时的第一个步骤，固定先检查 setup 状态文件。运行 `bash scripts/detect.sh agent` 获取当前 agent 类型，读取状态文件中 `agents.{当前agent类型}` 节。**以下任一条件命中时，必须立即停止当前搜索任务（不得执行步骤 2-8），转 `references/setup.md`：**
    - 状态文件不存在
    - 当前 agent 在 `agents` 中无记录（首次使用）
    - `agents.{当前agent}.items` 中任一 MCP 的 `installed != true`
    - 任一必需 MCP 不可用或连接失败
    **禁止在 MCP 缺失时用替代工具降级执行搜索任务。**
    **进入 setup 前，先检查状态文件顶层 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：`hasApiKey=false` 且 `apiKey=null` 时依次询问用户是否配置 Key，配置后写入状态文件，后续不再询问。**
-2. setup 状态通过后，再判断问题是否属于精确配置项、阈值、开关、`flag`、`option`、`parameter`、`env` 一类问题。
-3. 命中配置项类问题时，先读 `references/strategies/config-index-shortcut.md`，优先定位官方配置索引入口。
-4. 技术文档问题先走 `Context7`，固定顺序是先 `resolve-library-id` 再 `query-docs`；详细模板和错误示例看 `examples/usage.md`。
-5. 只要属于联网搜索，固定使用 `Exa`；不得改用任何其他搜索型 MCP。`Exa` 不可用时只能回到 `references/setup.md` 修复。
-6. `Context7` 之后继续走 `Exa`，补网页资料、最新信息或官方入口。
-7. `Exa` 结果命中 GitHub 仓库时走 `DeepWiki` 获取文档；需要读取仓库具体文件或目录结构时走 `github-fetcher`。
-8. 只有在用户已给出明确 URL，或 `Exa` 已经定位到目标网页后，才允许进入网页正文读取。正文读取不是搜索步骤，不能替代 `Exa`。
-9. 最终按 `references/rules/output-format.md` 组织回答，优先给官方文档，再给网页资料、正文读取结果和仓库信息。
+2. 配置项类问题（阈值、开关、flag、option、parameter、env）先读 `references/strategies/config-index-shortcut.md`。
+3. 技术文档先走 `Context7`（先 `resolve-library-id` 再 `query-docs`），模板和错误示例见 `examples/usage.md`。
+4. 联网搜索固定使用 `Exa`，不可替代；不可用时回 `references/setup.md` 修复。Context7 之后继续走 `Exa` 补网页资料。
+5. Exa 命中 GitHub 仓库时走 `DeepWiki` 获取文档；需读具体文件或目录时走 `github-fetcher`。
+6. 只有用户已给出明确 URL 或 Exa 已定位后才允许网页正文读取。正文读取不是搜索步骤，不能替代 `Exa`。
+7. 最终按 `references/rules/output-format.md` 组织回答，优先给官方文档，再给网页资料、正文读取结果和仓库信息。
 
 ## MCP 使用边界
 
-- 技术文档：只允许 `Context7`
-- 联网搜索：只允许 `Exa`
-- GitHub 仓库文档：只允许 `mcp-deepwiki`
-- GitHub 仓库文件/目录：只允许 `github-fetcher`
-- 网页正文：只允许在"已知 URL 的非搜索读取"场景使用宿主已提供的正文读取工具
-- 禁止把 `open-websearch`、通用浏览器搜索或其他搜索型 MCP 当成 `Exa` 的替代品
+工具映射见上方"MCP 快速参考"表。固定禁止：
+
+- 禁止用 `open-websearch` 或其他搜索型 MCP 替代 `Exa`
 - 禁止用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
+- 禁止在 MCP 缺失时用替代工具降级执行搜索任务
+
+## 常见错误
+
+- 跳过 `resolve-library-id` 直接猜测 `libraryId`（Context7 必须两步调用）
+- 缺少 `libraryName` 参数调用 `resolve-library-id`
+- 用 `libraryName` 传给 `query-docs`（应该用 `libraryId`）
+- `Exa` 不可用时切换到其他搜索 MCP（必须回 setup 修复）
+- 把网页正文读取当成搜索步骤替代 `Exa`
+- 用 `mcp-deepwiki` 替代 `github-fetcher` 读文件，或反之
+- Context7 超过 3 次调用限制后仍继续调用（应转 Exa）
+- setup 状态未通过时跳过直接搜索
 
 ## 按需继续加载
 
