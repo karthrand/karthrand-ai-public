@@ -27,6 +27,9 @@ SCOPE="user"
 FORCE=0
 ALL_MCP_LIST="context7 exa mcp-deepwiki github-fetcher"
 
+# MCP 别名映射：别名 → 规范名
+MCP_ALIASES="deepwiki:mcp-deepwiki github-fetcher-mcp:github-fetcher exa-mcp:exa"
+
 usage() {
   cat <<'EOF'
 用法: setup-mcp.sh [选项]
@@ -83,6 +86,7 @@ get_npm_package() {
     context7)       printf '%s' "@upstash/context7-mcp@latest" ;;
     mcp-deepwiki)   printf '%s' "mcp-deepwiki@latest" ;;
     github-fetcher) printf '%s' "github-fetcher-mcp" ;;
+    exa|all)        printf '' ;;  # exa 走 remote，all 不经过此函数
     *)              printf '' ;;
   esac
 }
@@ -93,7 +97,23 @@ is_remote_mcp() {
 
 case "$MCP_NAME" in
   context7|mcp-deepwiki|github-fetcher|exa|all) ;;
-  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1 ;;
+  *) # 尝试别名匹配
+    RESOLVED=""
+    for alias_pair in $MCP_ALIASES; do
+      alias_name="${alias_pair%%:*}"
+      canonical="${alias_pair#*:}"
+      if [ "$MCP_NAME" = "$alias_name" ]; then
+        RESOLVED="$canonical"
+        break
+      fi
+    done
+    if [ -n "$RESOLVED" ]; then
+      echo "别名 $MCP_NAME 已解析为规范名 $RESOLVED"
+      MCP_NAME="$RESOLVED"
+    else
+      echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1
+    fi
+    ;;
 esac
 
 # ==============================================================================
@@ -130,11 +150,11 @@ read_stored_key() {
   local state_file="${STATE_DIR}setup-state.json"
   if [ -f "$state_file" ] && command -v python3 &>/dev/null; then
     local key
-    key="$(python3 -c "
-import json, sys
+    key="$(_SF="$state_file" _M="$mcp" python3 -c "
+import json, os, sys
 try:
-    data = json.load(open('$state_file'))
-    cred = data.get('credentials', {}).get('$mcp', {})
+    data = json.load(open(os.environ['_SF']))
+    cred = data.get('credentials', {}).get(os.environ['_M'], {})
     if cred.get('hasApiKey') and cred.get('apiKey'):
         print(cred['apiKey'])
 except: pass
@@ -203,21 +223,6 @@ try:
             'agents': {}
         }
 
-    # v2 -> v3 迁移：将旧 runtime/items 移入 agents
-    if data.get('version', 2) < 3:
-        old_runtime = data.get('runtime', {})
-        old_agent = old_runtime.get('agentType', '')
-        old_items = data.get('items', [])
-        if old_agent and old_items:
-            data.setdefault('agents', {})[old_agent] = {
-                'osType': old_runtime.get('osType', ''),
-                'detectionSource': old_runtime.get('detectionSource', ''),
-                'items': old_items
-            }
-        data.pop('runtime', None)
-        data.pop('items', None)
-        data['version'] = 3
-
     now = datetime.now(timezone.utc).isoformat()
     data['updatedAt'] = now
     if not data.get('stateDir'):
@@ -256,7 +261,8 @@ except Exception as e:
 " 2>/dev/null
 }
 
-if [ "$FORCE" -eq 0 ]; then
+# --mcp all 跳过单项前置检查，在循环内逐项判断
+if [ "$MCP_NAME" != "all" ] && [ "$FORCE" -eq 0 ]; then
   if is_mcp_installed "$MCP_NAME" "$STATE_FILE" "$AGENT"; then
     echo "MCP $MCP_NAME 已标记为已安装。使用 --force 强制重新安装。"
     exit 0

@@ -141,7 +141,6 @@
 - 每个 agent 只读写 `agents.{自己的类型}` 节，不触碰其他 agent 的数据
 - `credentials` 在顶层，跨 agent 共享 API Key（只需询问一次）
 - 不存在"agent 不一致"的概念——首次在某个 agent 使用时，`agents` 下无对应记录，直接进入 setup
-- `setup-mcp.sh` 检测到旧版本（version < 3）时自动迁移：旧 `runtime` / `items` 移入 `agents.{旧agentType}`
 
 ### credentials 固定规则
 
@@ -209,6 +208,12 @@ bash scripts/setup-mcp.sh --mcp github-fetcher
 
 # 强制重新安装
 bash scripts/setup-mcp.sh --mcp context7 --force
+
+# 批量安装全部四项（跳过已安装的）
+bash scripts/setup-mcp.sh --mcp all
+
+# 批量强制重装
+bash scripts/setup-mcp.sh --mcp all --force
 ```
 
 脚本内部会自动调用 `detect.sh agent` 和 `detect.sh os` 进行检测，并从 `setup-state.json` 的 `credentials` 节读取已存储的 API Key。
