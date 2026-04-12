@@ -1,6 +1,6 @@
 ---
 name: search-web
-description: Use when searching library docs, API reference, code examples, npm packages, framework guides, or GitHub repos (README, source code, directory structure). Triggers: "how to use X", "X documentation", "X API", "npm package X", "GitHub repo X", Context7 rate limit exceeded, documentation outdated, tool not found, library version mismatch. Covers Context7, Exa, DeepWiki, github-fetcher. 当用户要求搜索技术文档、查代码示例、查网页资料、查看 GitHub 仓库信息、查 API 参考、查 npm 包用法、查框架指南时使用。
+description: "当需要网络搜索获取最新资料时使用。搜索技术文档、API 参考、代码示例、npm 包用法、框架指南、GitHub 仓库（README、源码、目录结构）。"
 ---
 
 # Search-Web 技能
