@@ -4,9 +4,7 @@
 
 出现以下任一情况时读取本文件：
 
-- 首次使用 `search-web`
-- `search-web` 的 setup 状态文件不存在
-- setup 状态文件存在，但与当前宿主中的真实安装状态不一致
+- `bash scripts/detect.sh` 输出 `initialized=false`（标志文件不存在）
 - `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
 - 需要为 `Claude Code`、`Codex`、`OpenCode` 或 `QwenCode` 配置 `search-web` 的必需 MCP
 
@@ -33,20 +31,28 @@
 
 ## 宿主识别方式
 
-多宿主 setup 必须先识别当前宿主，且只能调用本 skill 自己的脚本副本：
+多宿主 setup 必须先识别当前宿主，调用本 skill 自己的脚本副本：
 
-- `bash scripts/detect.sh agent` — 检测 code agent 类型
-- `bash scripts/detect.sh os` — 检测运行时 OS 类型
-- `bash scripts/detect.sh state-dir search-web` — 获取状态目录路径
-- `bash scripts/detect.sh -v agent` — 详细模式，查看判定依据
+```bash
+bash scripts/detect.sh
+```
+
+单次调用，无参数，输出四行：
+```
+agent=claude-code
+os=windows
+state_dir=C:\Users\Administrator\.config\search-web\
+initialized=true
+```
 
 固定规则：
 
 1. `scripts/detect.sh` 必须是从 `skill-harness` 复制过来的物理副本，不能通过跨 skill 相对路径引用，也不能使用符号链接。
-2. `bash scripts/detect.sh agent` 的输出只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`unknown`。
-3. `bash scripts/detect.sh os` 的输出只能是 `windows`、`linux`、`macos`、`unknown`。
-4. `bash scripts/detect.sh state-dir search-web` 输出状态目录路径，所有平台统一为 `~/.config/search-web/`。
-5. 如果 agent 输出为 `unknown`，立即停止，不继续猜测配置路径，也不写入宿主专属状态。
+2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`unknown`。
+3. `os` 只能是 `windows`、`linux`、`macos`、`unknown`。
+4. `state_dir` 所有平台统一为 `~/.config/search-web/`。
+5. `initialized` 通过标志文件 `state_dir/{agent}` 是否存在判定。
+6. 如果 `agent` 输出为 `unknown`，立即停止，不继续猜测配置路径。
 
 禁止做法：
 
@@ -57,120 +63,47 @@
 
 ## 固定决策
 
-1. 先运行 `bash scripts/detect.sh agent` 完成宿主识别。
-2. 再运行 `bash scripts/detect.sh os` 完成 OS 检测。
-3. 再运行 `bash scripts/detect.sh state-dir search-web` 获取状态目录路径。
-4. 读取用户级状态文件 `setup-state.json`（位于状态目录下，全平台统一为 `~/.config/search-web/setup-state.json`）。
-5. 检查顶层 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：
-   - 如果 `credentials.context7.hasApiKey === false` 且 `apiKey === null`：询问用户"是否配置 Context7 API Key？"
-     - 用户选择配置 → 记录 Key 到 `credentials.context7.apiKey`，设 `hasApiKey=true`
-     - 用户选择跳过 → 保留 `hasApiKey=false`，写入 `apiKey="skipped"`，不再后续询问
-   - 如果 `credentials.exa.hasApiKey === false` 且 `apiKey === null`：询问用户"是否配置 Exa API Key？"
-     - 用户选择配置 → 记录 Key 到 `credentials.exa.apiKey`，设 `hasApiKey=true`
-     - 用户选择跳过 → 保留 `hasApiKey=false`，写入 `apiKey="skipped"`，不再后续询问
-6. 读取 `agents.{当前agent类型}.items`，逐项真实检测 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已经注册可用；不能只看状态文件，也不能只看本机是否装过某个命令。
-7. 四项都可用时，更新状态后立即停止，不重复 setup。
-8. 任一项缺失、未注册、连接失败或状态失真时，进入对应项的 setup / repair。
-9. `exa` 需要 key 时，优先从 `credentials.exa.apiKey` 读取已存储的 Key；如未存储，再询问。
-10. 安装 MCP 时，`setup-mcp.sh` 自动从状态文件 `credentials` 节读取已存储的 Key 并注入。
-11. 所有必需项 setup 成功后回写状态文件；失败则记录失败项和最近一次环境错误。
+1. 运行 `bash scripts/detect.sh`（无参数），获取 agent、os、state_dir、initialized 四项信息。
+2. 检查 `credentials/` 目录下 `context7` 和 `exa` 文件：
+   - 文件不存在或为空：询问用户"是否配置 API Key？"
+     - 用户选择配置 → 写入 Key 值到对应文件
+     - 用户选择跳过 → 写入 "skipped" 到对应文件，后续不再询问
+   - 文件内容为 "skipped"：用户曾明确跳过，不再询问
+   - 文件内容为其他值：已配置，安装 MCP 时自动读取注入
+3. 调用一次 `xxx mcp list`（如 `claude mcp list`），将输出存为变量，逐项 grep 检查 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已安装。
+   - 已安装的跳过，未安装的执行 `setup-mcp.sh` 安装。
+   - `mcp list` 只调用一次，后续全部 grep 变量判断，严禁每个 MCP 单独调用。
+4. 所有缺失 MCP 安装完成后，创建标志文件 `{state_dir}/{agent}`，使 `initialized=true`。
+5. 四项都可用时，返回主流程，不重复 setup。
+6. `exa` 需要 key 时，优先从 `credentials/exa` 文件读取已存储的 Key；如未存储，再询问。
 
-## 状态文件
+## 状态管理
 
-状态文件只记录 setup 结果，不承担安装逻辑。支持多个 code agent 并存，每个 agent 只读写自己的状态。
+使用目录结构 + 平面文件，零解析依赖。位置：`~/.config/search-web/`（全平台统一）。
 
-位置：`~/.config/search-web/setup-state.json`（全平台统一，通过 `detect.sh state-dir search-web` 获取）。
-
-```json
-{
-  "version": 3,
-  "updatedAt": "ISO-8601",
-  "stateDir": "~/.config/search-web/",
-  "credentials": {
-    "context7": {
-      "hasApiKey": false,
-      "apiKey": null
-    },
-    "exa": {
-      "hasApiKey": false,
-      "apiKey": null
-    }
-  },
-  "agents": {
-    "claude-code": {
-      "osType": "windows|linux|macos",
-      "detectionSource": "session_env",
-      "items": [
-        {
-          "name": "context7",
-          "type": "mcp",
-          "installed": true,
-          "verifiedAt": "ISO-8601",
-          "lastError": ""
-        },
-        {
-          "name": "exa",
-          "type": "mcp",
-          "installed": true,
-          "verifiedAt": "ISO-8601",
-          "lastError": ""
-        },
-        {
-          "name": "mcp-deepwiki",
-          "type": "mcp",
-          "installed": true,
-          "verifiedAt": "ISO-8601",
-          "lastError": ""
-        },
-        {
-          "name": "github-fetcher",
-          "type": "mcp",
-          "installed": true,
-          "verifiedAt": "ISO-8601",
-          "lastError": ""
-        }
-      ]
-    }
-  }
-}
+```
+~/.config/search-web/
+  claude-code                        # initialized 标志文件（detect.sh 管理）
+  codex                              # 其他 agent 的标志文件
+  credentials/
+    context7                         # API Key 值、"skipped"、或空
+    exa                              # API Key 值、"skipped"、或空
 ```
 
-### 多 agent 并存规则
+### 标志文件规则
 
-- `agents` 字典以 agent 类型为 key（`claude-code` / `codex` / `opencode` / `qwen-code`），每个 agent 独立维护自己的 `osType` 和 `items`
-- 每个 agent 只读写 `agents.{自己的类型}` 节，不触碰其他 agent 的数据
-- `credentials` 在顶层，跨 agent 共享 API Key（只需询问一次）
-- 不存在"agent 不一致"的概念——首次在某个 agent 使用时，`agents` 下无对应记录，直接进入 setup
+- 标志文件名即 agent 类型（如 `claude-code`、`codex`），存在即表示该 agent 已完成 setup
+- `detect.sh` 通过检查 `{state_dir}/{agent}` 文件是否存在来判定 `initialized`
+- 安装完成后由 `setup-mcp.sh` 创建，不手动管理
+- 删除标志文件即触发下次使用时重新 setup
 
 ### credentials 固定规则
 
-- `hasApiKey=false` 且 `apiKey=null`：未配置，进入 setup 前需询问
-- `hasApiKey=false` 且 `apiKey="skipped"`：用户曾明确跳过，不再询问
-- `hasApiKey=true` 且 `apiKey` 有值：已配置，安装 MCP 时自动从状态文件读取注入
-- Key 存储在 `~/.config/search-web/setup-state.json` 的顶层 `credentials` 节，跨 agent 共享
-- 多 code agent 共享同一 `credentials`，只需询问一次 Key
-
-固定规则：
-
-- 当前 agent 类型只能来自 `bash scripts/detect.sh agent` 的结果
-- 当前 agent 的 `osType` 只能来自 `bash scripts/detect.sh os` 的结果
-- `stateDir` 只能来自 `bash scripts/detect.sh state-dir search-web` 的结果
-- `detectionSource` 只允许记录 `session_env` 或 `unknown`
-- 默认不记录真实 API Key 到 `items` 中，Key 只存储在顶层 `credentials` 节
-- 状态文件只能写到用户级数据目录，不能写回仓库
-- 每个 agent 只读写 `agents.{自己的类型}` 节，不得修改其他 agent 的数据
-
-## 检测别名容错
-
-部分 agent 安装 MCP 时可能使用简称。检测时优先匹配规范名，未命中则检查别名：
-
-| 规范名 | 可接受别名 |
-|--------|-----------|
-| mcp-deepwiki | deepwiki |
-| github-fetcher | github-fetcher-mcp |
-| exa | exa-mcp |
-
-别名命中时视为已安装，但状态文件中统一使用规范名记录。
+- 文件不存在或为空：未配置，进入 setup 前需询问
+- 文件内容为 "skipped"：用户曾明确跳过，不再询问
+- 文件内容为其他值：已配置，安装 MCP 时自动读取注入
+- Key 存储在 `credentials/` 目录下的独立文件中，跨 agent 共享
+- 多 code agent 共享同一 `credentials/`，只需询问一次 Key
 
 ## 宿主配置路径
 
@@ -216,7 +149,7 @@ bash scripts/setup-mcp.sh --mcp all
 bash scripts/setup-mcp.sh --mcp all --force
 ```
 
-脚本内部会自动调用 `detect.sh agent` 和 `detect.sh os` 进行检测，并从 `setup-state.json` 的 `credentials` 节读取已存储的 API Key。
+脚本内部会自动调用 `detect.sh`（单次）获取 agent/os/state_dir，调用一次 `xxx mcp list` 检测已安装的 MCP，并从 `credentials/` 目录读取已存储的 API Key。
 
 ## 标准安装方式
 
@@ -603,20 +536,16 @@ qwen mcp add -s user -t stdio github-fetcher cmd /c npx -y github-fetcher-mcp
 ## 成功标准
 
 - 当前宿主里已经存在有效的 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 配置
-- 宿主识别由 `bash scripts/detect.sh agent` 完成，且结果不是 `unknown`
-- OS 检测由 `bash scripts/detect.sh os` 完成，且结果不是 `unknown`
-- 状态目录由 `bash scripts/detect.sh state-dir search-web` 获取
-- 真实检测确认四项都已注册可用
-- 状态文件 `agents.{当前agent类型}` 已更新到用户级数据目录
+- 宿主识别由 `bash scripts/detect.sh` 完成，且 `agent` 和 `os` 都不是 `unknown`
+- 通过一次 `xxx mcp list` 确认四项都已注册可用
+- 标志文件 `{state_dir}/{agent}` 已创建
 - 返回主流程前，不再存在必需 MCP 缺失项
-- 未触碰其他 agent 的状态数据
 
 ## 常见错误
 
-- 没先运行 `bash scripts/detect.sh agent`，就直接套用某个宿主的配置格式
+- 没先运行 `bash scripts/detect.sh`，就直接套用某个宿主的配置格式
 - 继续保留手写的环境变量 / prompt / 工具指纹探测逻辑
-- 没先检查状态文件，就直接开始调 `Context7`、`Exa`、`DeepWiki` 或 `github-fetcher`
-- 只看状态文件，不复验当前宿主真实环境
+- 每检测一个 MCP 就调用一次 `mcp list`（应只调一次，结果存变量 grep 判断）
 - 通过跨 skill 相对路径调用别的检测脚本
 - 没写死不同宿主的配置路径，交给 agent 自己猜
 - `Codex` 把 `context7`、`mcp-deepwiki` 或 `github-fetcher` 错写成远程 URL 配置
@@ -624,6 +553,3 @@ qwen mcp add -s user -t stdio github-fetcher cmd /c npx -y github-fetcher-mcp
 - 用户明确有 key，却不先索取就直接写配置
 - 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具
 - 用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
-- 状态文件写到仓库内而非 `~/.config/search-web/`
-- 修改了其他 agent 的状态数据（每个 agent 只应读写自己的 `agents.{类型}` 节）
-- 检测 MCP 时未考虑别名（如 `deepwiki` 应识别为 `mcp-deepwiki`）

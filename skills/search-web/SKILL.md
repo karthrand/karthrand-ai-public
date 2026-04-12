@@ -39,13 +39,12 @@ description: "当需要网络搜索获取最新资料时使用。搜索技术文
 
 ## 核心流程
 
-1. 使用时的第一个步骤，固定先检查 setup 状态文件。运行 `bash scripts/detect.sh agent` 获取当前 agent 类型，读取状态文件中 `agents.{当前agent类型}` 节。**以下任一条件命中时，必须立即停止当前搜索任务（不得执行步骤 2-8），转 `references/setup.md`：**
-   - 状态文件不存在
-   - 当前 agent 在 `agents` 中无记录（首次使用）
-   - `agents.{当前agent}.items` 中任一 MCP 的 `installed != true`
-   - 任一必需 MCP 不可用或连接失败
+1. 使用时的第一个步骤，运行 `bash scripts/detect.sh`，解析输出：
+   - `initialized=true`：直接进入步骤 2
+   - `initialized=false`：进入 `references/setup.md` 执行安装流程
+   **进入 setup 前，先读取 `credentials/` 目录下 `context7` 和 `exa` 文件：文件不存在或为空时询问用户是否配置 Key，用户选择跳过则写入 "skipped"，后续不再询问。**
    **禁止在 MCP 缺失时用替代工具降级执行搜索任务。**
-   **进入 setup 前，先检查状态文件顶层 `credentials` 节中 `context7` 和 `exa` 的 API Key 状态：`hasApiKey=false` 且 `apiKey=null` 时依次询问用户是否配置 Key，配置后写入状态文件，后续不再询问。**
+   **任何 MCP 在步骤 2-6 执行中报告未注册、连接失败或 server unavailable 时，必须停止当前搜索，回到 `references/setup.md` 修复。**
 2. 配置项类问题（阈值、开关、flag、option、parameter、env）先读 `references/strategies/config-index-shortcut.md`。
 3. 技术文档先走 `Context7`（先 `resolve-library-id` 再 `query-docs`），模板和错误示例见 `examples/usage.md`。
 4. 联网搜索固定使用 `Exa`，不可替代；不可用时回 `references/setup.md` 修复。Context7 之后继续走 `Exa` 补网页资料。
@@ -83,7 +82,7 @@ description: "当需要网络搜索获取最新资料时使用。搜索技术文
 
 如果示例文档与正文流程冲突，以本文件为准。
 
-首次使用，或者遇到状态文件缺失、当前 agent 在 `agents` 中无记录、`agents.{当前agent}.items` 中任一 MCP 未标记为已安装、`Context7` / `Exa` / `DeepWiki` / `github-fetcher` 未注册或连接失败时，读 `references/setup.md`。
+首次使用，或者 `bash scripts/detect.sh` 输出 `initialized=false` 时，读 `references/setup.md`。
 
 需要标准输出模板、来源标注规则或 Markdown 结构约束时，读 `references/rules/output-format.md`。
 

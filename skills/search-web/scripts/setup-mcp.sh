@@ -27,8 +27,6 @@ SCOPE="user"
 FORCE=0
 ALL_MCP_LIST="context7 exa mcp-deepwiki github-fetcher"
 
-# MCP 别名映射：别名 → 规范名
-MCP_ALIASES="deepwiki:mcp-deepwiki github-fetcher-mcp:github-fetcher exa-mcp:exa"
 
 usage() {
   cat <<'EOF'
@@ -38,15 +36,15 @@ search-web 技能 MCP 自动安装脚本
 
 选项:
   --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code)
-                    不传则自动调用 detect.sh agent 检测
+                    不传则自动调用 detect.sh 检测
   --os <类型>        目标运行时 OS (windows|linux|macos)
-                    不传则自动调用 detect.sh os 检测
+                    不传则自动调用 detect.sh 检测
   --mcp <名称>      MCP 名称 (context7|exa|mcp-deepwiki|github-fetcher|all)
                     必需参数；all 表示安装全部四项
   --api-key <值>     API Key，格式 "ENV_VAR_NAME=value"
                     仅 context7/exa 可选
   --scope <范围>     安装作用域 (user|project)，默认 user
-  --force            强制重新安装，忽略状态标记
+  --force            强制重新安装，忽略检测
   -h                 显示帮助
 
 示例:
@@ -86,7 +84,7 @@ get_npm_package() {
     context7)       printf '%s' "@upstash/context7-mcp@latest" ;;
     mcp-deepwiki)   printf '%s' "mcp-deepwiki@latest" ;;
     github-fetcher) printf '%s' "github-fetcher-mcp" ;;
-    exa|all)        printf '' ;;  # exa 走 remote，all 不经过此函数
+    exa|all)        printf '' ;;
     *)              printf '' ;;
   esac
 }
@@ -97,177 +95,96 @@ is_remote_mcp() {
 
 case "$MCP_NAME" in
   context7|mcp-deepwiki|github-fetcher|exa|all) ;;
-  *) # 尝试别名匹配
-    RESOLVED=""
-    for alias_pair in $MCP_ALIASES; do
-      alias_name="${alias_pair%%:*}"
-      canonical="${alias_pair#*:}"
-      if [ "$MCP_NAME" = "$alias_name" ]; then
-        RESOLVED="$canonical"
-        break
-      fi
-    done
-    if [ -n "$RESOLVED" ]; then
-      echo "别名 $MCP_NAME 已解析为规范名 $RESOLVED"
-      MCP_NAME="$RESOLVED"
-    else
-      echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1
-    fi
-    ;;
+  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1 ;;
 esac
 
 # ==============================================================================
-# 自动检测
+# 环境检测（单次调用 detect.sh）
 # ==============================================================================
 
+detect_output="$(bash "$SCRIPT_DIR/detect.sh")"
+
 if [ -z "$AGENT" ]; then
-  AGENT="$(bash "$SCRIPT_DIR/detect.sh" agent)"
-  if [ -z "$AGENT" ] || [ "$AGENT" = "unknown" ]; then
-    echo "错误: 无法检测当前 code agent 类型，请通过 --agent 参数指定" >&2
-    exit 1
-  fi
-  echo "自动检测 agent: $AGENT"
+  AGENT="$(printf '%s' "$detect_output" | grep '^agent=' | cut -d= -f2)"
 fi
-
 if [ -z "$OS_TYPE" ]; then
-  OS_TYPE="$(bash "$SCRIPT_DIR/detect.sh" os)"
-  if [ -z "$OS_TYPE" ] || [ "$OS_TYPE" = "unknown" ]; then
-    echo "错误: 无法检测当前 OS 类型，请通过 --os 参数指定" >&2
-    exit 1
-  fi
-  echo "自动检测 OS: $OS_TYPE"
+  OS_TYPE="$(printf '%s' "$detect_output" | grep '^os=' | cut -d= -f2)"
+fi
+STATE_DIR="$(printf '%s' "$detect_output" | grep '^state_dir=' | cut -d= -f2-)"
+
+if [ -z "$AGENT" ] || [ "$AGENT" = "unknown" ]; then
+  echo "错误: 无法检测当前 code agent 类型，请通过 --agent 参数指定" >&2
+  exit 1
+fi
+if [ -z "$OS_TYPE" ] || [ "$OS_TYPE" = "unknown" ]; then
+  echo "错误: 无法检测当前 OS 类型，请通过 --os 参数指定" >&2
+  exit 1
 fi
 
-STATE_DIR="$(bash "$SCRIPT_DIR/detect.sh" state-dir "$SKILL_NAME")"
+echo "Agent: $AGENT"
+echo "OS: $OS_TYPE"
 echo "状态目录: $STATE_DIR"
 
 # ==============================================================================
-# 从状态文件读取已存储的 API Key
+# MCP 安装检测（一次 mcp list，grep 变量判断）
+# ==============================================================================
+
+# 调用一次 xxx mcp list，结果存变量
+# 输出格式：context7: cmd /c npx ... - ✓ Connected
+check_mcp_list() {
+  local agent="$1"
+  case "$agent" in
+    claude-code) claude mcp list 2>/dev/null || echo "" ;;
+    codex)       codex mcp list 2>/dev/null || echo "" ;;
+    opencode)    opencode mcp list 2>/dev/null || echo "" ;;
+    qwen-code)   qwen mcp list 2>/dev/null || echo "" ;;
+    *)           echo "" ;;
+  esac
+}
+
+MCP_LIST_OUTPUT=""
+
+# 根据 agent 类型匹配不同的 list 输出格式
+# claude/qwen: "name: cmd ..."  codex: 表格首列  opencode: ANSI 树形
+is_mcp_installed() {
+  local mcp="$1"
+  local agent="${2:-$AGENT}"
+  case "$agent" in
+    claude-code|qwen-code)
+      printf '%s' "$MCP_LIST_OUTPUT" | grep -q "^${mcp}:"
+      ;;
+    codex)
+      printf '%s' "$MCP_LIST_OUTPUT" | awk -v mcp="$mcp" 'NR>1 && $1==mcp'
+      ;;
+    opencode)
+      printf '%s' "$MCP_LIST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -qw "$mcp"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# ==============================================================================
+# Credentials 读写（平面文件，零依赖）
 # ==============================================================================
 
 read_stored_key() {
   local mcp="$1"
-  local state_file="${STATE_DIR}setup-state.json"
-  if [ -f "$state_file" ] && command -v python3 &>/dev/null; then
-    local key
-    key="$(_SF="$state_file" _M="$mcp" python3 -c "
-import json, os, sys
-try:
-    data = json.load(open(os.environ['_SF']))
-    cred = data.get('credentials', {}).get(os.environ['_M'], {})
-    if cred.get('hasApiKey') and cred.get('apiKey'):
-        print(cred['apiKey'])
-except: pass
-" 2>/dev/null || true)"
-    if [ -n "$key" ]; then
-      printf '%s' "$key"
-      return 0
-    fi
+  local key_file="${STATE_DIR}credentials/${mcp}"
+  if [ -f "$key_file" ]; then
+    local val
+    val="$(cat "$key_file")"
+    [ "$val" != "skipped" ] && [ -n "$val" ] && printf '%s' "$val" && return 0
   fi
   return 1
 }
 
-# ==============================================================================
-# 状态检查与更新
-# ==============================================================================
-
-STATE_FILE="${STATE_DIR}setup-state.json"
-
-# 检查指定 MCP 在当前 agent 的状态文件中是否已标记为已安装
-is_mcp_installed() {
-  local mcp="$1"
-  local state_file="$2"
-  local agent_type="$3"
-  [ -f "$state_file" ] || return 1
-  _SF="$state_file" _M="$mcp" _A="$agent_type" python3 -c "
-import json, os, sys
-try:
-    data = json.load(open(os.environ['_SF']))
-    items = data.get('agents', {}).get(os.environ['_A'], {}).get('items', [])
-    for item in items:
-        if item.get('name') == os.environ['_M'] and item.get('installed') is True:
-            sys.exit(0)
-except Exception:
-    pass
-sys.exit(1)
-" 2>/dev/null
+save_stored_key() {
+  local mcp="$1" val="$2"
+  mkdir -p "${STATE_DIR}credentials"
+  printf '%s' "$val" > "${STATE_DIR}credentials/${mcp}"
 }
-
-# 安装成功后更新状态文件（多 agent 并存架构）
-update_state_file() {
-  local mcp="$1"
-  local state_file="$2"
-  local agent_type="$3"
-  local os_type="$4"
-  _SF="$state_file" _M="$mcp" _A="$agent_type" _O="$os_type" python3 -c "
-import json, os, sys
-from datetime import datetime, timezone
-
-state_file = os.environ['_SF']
-mcp_name = os.environ['_M']
-agent_type = os.environ['_A']
-os_type = os.environ['_O']
-
-try:
-    if os.path.exists(state_file):
-        with open(state_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        os.makedirs(os.path.dirname(state_file), exist_ok=True)
-        data = {
-            'version': 3, 'updatedAt': '', 'stateDir': '',
-            'credentials': {
-                'context7': {'hasApiKey': False, 'apiKey': None},
-                'exa': {'hasApiKey': False, 'apiKey': None}
-            },
-            'agents': {}
-        }
-
-    now = datetime.now(timezone.utc).isoformat()
-    data['updatedAt'] = now
-    if not data.get('stateDir'):
-        data['stateDir'] = os.path.dirname(state_file).replace(os.sep, '/') + '/'
-
-    # 确保 agents.{agent_type} 存在
-    agents = data.setdefault('agents', {})
-    if agent_type not in agents:
-        agents[agent_type] = {
-            'osType': os_type,
-            'detectionSource': 'session_env',
-            'items': []
-        }
-
-    # 更新当前 agent 的 items
-    found = False
-    for item in agents[agent_type].get('items', []):
-        if item.get('name') == mcp_name:
-            item['installed'] = True
-            item['verifiedAt'] = now
-            item['lastError'] = ''
-            found = True
-            break
-
-    if not found:
-        agents[agent_type].setdefault('items', []).append({
-            'name': mcp_name, 'type': 'mcp',
-            'installed': True, 'verifiedAt': now, 'lastError': ''
-        })
-
-    with open(state_file, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-except Exception as e:
-    print(f'状态文件更新失败: {e}', file=sys.stderr)
-    sys.exit(1)
-" 2>/dev/null
-}
-
-# --mcp all 跳过单项前置检查，在循环内逐项判断
-if [ "$MCP_NAME" != "all" ] && [ "$FORCE" -eq 0 ]; then
-  if is_mcp_installed "$MCP_NAME" "$STATE_FILE" "$AGENT"; then
-    echo "MCP $MCP_NAME 已标记为已安装。使用 --force 强制重新安装。"
-    exit 0
-  fi
-fi
 
 # ==============================================================================
 # 安装命令
@@ -357,7 +274,7 @@ install_remote_mcp() {
 
   local exa_url="https://mcp.exa.ai/mcp"
 
-  # 优先使用 --api-key 参数，其次从状态文件读取
+  # 优先使用 --api-key 参数，其次从 credentials 文件读取
   if [ -n "$API_KEY" ]; then
     local key_value
     key_value="$(printf '%s' "$API_KEY" | cut -d '=' -f 2-)"
@@ -368,7 +285,7 @@ install_remote_mcp() {
     local stored_key
     if stored_key="$(read_stored_key exa)" && [ -n "$stored_key" ]; then
       exa_url="https://mcp.exa.ai/mcp?exaApiKey=${stored_key}"
-      echo "从状态文件读取已存储的 Exa API Key"
+      echo "从 credentials 文件读取已存储的 Exa API Key"
     fi
   fi
 
@@ -401,6 +318,15 @@ install_remote_mcp() {
 }
 
 # ==============================================================================
+# 标志文件管理
+# ==============================================================================
+
+create_init_flag() {
+  mkdir -p "$STATE_DIR"
+  touch "${STATE_DIR}${AGENT}"
+}
+
+# ==============================================================================
 # 执行
 # ==============================================================================
 
@@ -415,31 +341,48 @@ run_install() {
 
   install_mcp "$mcp" "$AGENT" "$OS_TYPE"
 
-  # 安装成功后更新状态文件
-  if update_state_file "$mcp" "$STATE_FILE" "$AGENT" "$OS_TYPE"; then
-    echo ""
-    echo "MCP $mcp 安装命令已执行，状态文件已更新。"
-  else
-    echo ""
-    echo "MCP $mcp 安装命令已执行，但状态文件更新失败。"
-    echo "请在 code agent 中重新进入 search-web 主流程以更新状态。"
-  fi
+  echo ""
+  echo "MCP $mcp 安装命令已执行。"
 }
 
 if [ "$MCP_NAME" = "all" ]; then
-  echo "批量安装模式：将安装全部四项 MCP"
+  echo "批量安装模式"
   echo ""
-  for mcp in $ALL_MCP_LIST; do
-    if [ "$FORCE" -eq 0 ] && is_mcp_installed "$mcp" "$STATE_FILE" "$AGENT"; then
-      echo "MCP $mcp 已标记为已安装，跳过。"
-      echo ""
-    else
+
+  if [ "$FORCE" -eq 0 ]; then
+    # 只调用一次 mcp list
+    MCP_LIST_OUTPUT="$(check_mcp_list "$AGENT")"
+
+    for mcp in $ALL_MCP_LIST; do
+      if is_mcp_installed "$mcp"; then
+        echo "MCP $mcp 已安装，跳过。"
+        echo ""
+      else
+        run_install "$mcp"
+        echo ""
+      fi
+    done
+  else
+    # --force 模式：跳过检测，全部安装
+    for mcp in $ALL_MCP_LIST; do
       run_install "$mcp"
       echo ""
-    fi
-  done
+    done
+  fi
+
+  create_init_flag
   echo "批量安装完成。请重启 code agent 后验证 MCP 是否可用。"
 else
+  # 单项安装
+  if [ "$FORCE" -eq 0 ]; then
+    MCP_LIST_OUTPUT="$(check_mcp_list "$AGENT")"
+    if is_mcp_installed "$MCP_NAME"; then
+      echo "MCP $MCP_NAME 已安装，跳过。使用 --force 强制重新安装。"
+      exit 0
+    fi
+  fi
+
   run_install "$MCP_NAME"
+  create_init_flag
   echo "请重启 code agent 后验证 MCP 是否可用。"
 fi
