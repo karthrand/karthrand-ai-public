@@ -41,7 +41,7 @@ bash scripts/detect.sh
 ```
 agent=claude-code
 os=windows
-state_dir=C:\Users\Administrator\.config\search-web\
+state_dir=C:/Users/Administrator/.config/search-web/
 initialized=true
 ```
 
@@ -271,7 +271,7 @@ qwen mcp add -s user -t stdio context7 cmd /c npx -y @upstash/context7-mcp@lates
 }
 ```
 
-有 key（优先从 `credentials.exa.apiKey` 读取）：
+有 key（优先从 `credentials/exa` 文件读取）：
 
 ```json
 {

@@ -23,32 +23,30 @@
 ### 验证安装
 
 - 直接询问 code agent 有哪些 skills
-- 或运行 `bash scripts/detect.sh agent` 确认宿主识别正常
+- 或运行 `bash scripts/detect.sh` 确认宿主识别正常
 
 ## 整体流程
 
 ```mermaid
 flowchart TD
-    Start([用户查询]) --> CheckState{检查 setup-state.json}
+    Start([用户查询]) --> CheckState{运行 detect.sh 检查初始化状态}
     CheckState -->|缺失/不一致| CheckCreds{检查 credentials}
     CheckState -->|正常| ConfigCheck{配置项类问题?}
 
     CheckCreds -->|context7 hasApiKey=false| AskC7[询问是否配置 Context7 API Key]
     CheckCreds -->|exa hasApiKey=false| AskExa[询问是否配置 Exa API Key]
     CheckCreds -->|Key 齐全或已跳过| Setup[进入 setup 流程]
-    AskC7 -->|用户提供| SaveC7Key[写入 credentials.context7]
+    AskC7 -->|用户提供| SaveC7Key[写入 credentials/context7]
     AskC7 -->|用户跳过| AskExa
-    AskExa -->|用户提供| SaveExaKey[写入 credentials.exa]
+    AskExa -->|用户提供| SaveExaKey[写入 credentials/exa]
     AskExa -->|用户跳过| Setup
     SaveC7Key --> CheckCreds
     SaveExaKey --> CheckCreds
 
-    Setup --> DetectAgent[1. detect.sh agent]
-    DetectAgent --> DetectOS[2. detect.sh os]
-    DetectOS --> StateDir[3. detect.sh state-dir search-web]
-    StateDir --> CheckMCP[4. 逐项检测 4 个 MCP]
-    CheckMCP -->|缺失| InstallMCP[5. setup-mcp.sh 安装<br/>自动从 credentials 读取 Key]
-    CheckMCP -->|全部可用| WriteState[6. 更新 setup-state.json]
+    Setup --> Detect[1. detect.sh（无参数）]
+    Detect --> CheckMCP[2. 逐项检测 4 个 MCP]
+    CheckMCP -->|缺失| InstallMCP[3. setup-mcp.sh 安装<br/>自动从 credentials 读取 Key]
+    CheckMCP -->|全部可用| WriteState[4. 创建 init_flag 标志文件]
     InstallMCP --> WriteState
     WriteState --> ConfigCheck
 
@@ -84,16 +82,10 @@ flowchart TD
 首次使用前，需确保 4 个必需 MCP 已安装：
 
 ```bash
-# 1. 检测宿主类型
-bash scripts/detect.sh agent
+# 1. 检测环境（agent、os、state_dir、initialized 四项一次输出）
+bash scripts/detect.sh
 
-# 2. 检测运行时 OS
-bash scripts/detect.sh os
-
-# 3. 获取状态目录
-bash scripts/detect.sh state-dir search-web
-
-# 4. 使用脚本安装 MCP（推荐）
+# 2. 使用脚本安装 MCP（推荐）
 bash scripts/setup-mcp.sh --mcp context7
 bash scripts/setup-mcp.sh --mcp exa
 bash scripts/setup-mcp.sh --mcp mcp-deepwiki

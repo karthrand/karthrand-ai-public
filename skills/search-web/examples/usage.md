@@ -15,7 +15,7 @@
 
 ```mermaid
 graph TD
-    A[用户查询] --> B[先检查 setup-state.json]
+    A[用户查询] --> B[运行 detect.sh 检查初始化状态]
     B --> C{credentials 需询问?}
     C -->|是| C1[依次询问 context7/exa Key]
     C1 --> B
@@ -42,7 +42,7 @@ graph TD
 
 固定规则：
 
-1. 使用时先检查状态文件和真实环境
+1. 使用时先运行 detect.sh 确认初始化状态和真实环境
 2. `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一缺失都先修复
 3. 技术文档问题先走 `Context7`
 4. 联网搜索固定只用 `Exa`，不得切换其他搜索型 MCP
@@ -53,16 +53,14 @@ graph TD
 ## 首次使用示例
 
 ```text
-1. 先运行 bash scripts/detect.sh agent
-2. 如果结果是 unknown，立即停止 setup 并说明无法识别当前宿主
-3. 再运行 bash scripts/detect.sh os 获取运行时 OS
-4. 再运行 bash scripts/detect.sh state-dir search-web 获取状态目录
-5. 读取 setup-state.json，检查 credentials 节
-6. 如果 credentials.context7.hasApiKey=false 且 apiKey=null，询问是否配置 Context7 Key
-7. 如果 credentials.exa.hasApiKey=false 且 apiKey=null，询问是否配置 Exa Key
-8. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
-9. 如果任一项缺失，立即进入 references/setup.md
-10. 所有必需项通过后，才开始正式搜索
+1. 运行 bash scripts/detect.sh（无参数），解析输出
+2. 如果 agent=unknown，立即停止 setup 并说明无法识别当前宿主
+3. 检查 credentials/ 目录下 context7 和 exa 文件
+4. 如果 credentials/context7 文件不存在或为空，询问是否配置 Context7 Key
+5. 如果 credentials/exa 文件不存在或为空，询问是否配置 Exa Key
+6. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
+7. 如果任一项缺失，立即进入 references/setup.md
+8. 所有必需项通过后，才开始正式搜索
 ```
 
 ## Context7 文档搜索
@@ -140,7 +138,6 @@ tool: mcp__exa__web_search_exa
 parameters:
   query: "Next.js 15 new features release notes"
   numResults: 5
-  type: "auto"
 ```
 
 ### 示例 2：限定官方域名
@@ -149,16 +146,7 @@ parameters:
 tool: mcp__exa__web_search_exa
 parameters:
   query: "React Server Components official guide"
-  includeDomains: ["react.dev"]
-  numResults: 5
-```
-
-### 示例 3：代码上下文搜索
-
-```yaml
-tool: mcp__exa__get_code_context_exa
-parameters:
-  query: "Rust async await tutorial examples"
+  allowed_domains: ["react.dev"]
   numResults: 5
 ```
 
@@ -170,14 +158,13 @@ parameters:
 - 本阶段是“读取正文”，不是“继续搜索”
 - 如果宿主没有提供正文读取工具，就只返回链接与失败说明
 
-### 两层降级策略
+### 读取策略
 
 ```mermaid
 graph LR
-    A[需要网页正文] --> B[markdown.new]
+    A[需要网页正文] --> B[宿主网页读取工具]
     B -->|成功| C[返回 Markdown]
-    B -->|失败| D[直接抓原始 URL]
-    D --> C
+    B -->|不可用| D[只返回链接与失败说明]
 ```
 
 ### 完整示例
@@ -185,18 +172,10 @@ graph LR
 ```yaml
 original_url: "https://example.com/blog/article"
 
-# Tier 1
-tool: mcp__fetch__fetch
-parameters:
-  url: "https://markdown.new/https://example.com/blog/article"
-  max_length: 5000
-
-# Tier 2
-tool: mcp__fetch__fetch
+# 使用宿主已提供的网页读取工具（如 mcp__web-reader__webReader）
+tool: mcp__web-reader__webReader
 parameters:
   url: "https://example.com/blog/article"
-  raw: false
-  max_length: 5000
 ```
 
 ## GitHub 仓库查询
@@ -256,7 +235,7 @@ parameters:
 ### 示例 1：技术文档 + 网页补充
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -274,13 +253,13 @@ tool: mcp__exa__web_search_exa
 parameters:
   query: "React Server Components official guide migration pitfalls"
   numResults: 5
-  includeDomains: ["react.dev"]
+  allowed_domains: ["react.dev"]
 ```
 
 ### 示例 2：最新资讯
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -303,7 +282,7 @@ parameters:
 ### 示例 3：文档 + 仓库联合分析
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh agent 唯一确认当前宿主，且 setup-state.json 中的 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -333,14 +312,14 @@ parameters:
 ### 示例 4：首次使用时先修复依赖
 
 ```text
-当前状态：setup-state.json 不存在，或其中的 context7 / exa / mcp-deepwiki 任一未通过
+当前状态：detect.sh 输出 initialized=false，或 context7 / exa / mcp-deepwiki 任一不可用
 处理方式：先进入 references/setup.md 完成 setup，再返回主流程
 ```
 
 ### 示例 5：宿主信号冲突时停止
 
 ```text
-当前状态：`bash scripts/detect.sh agent` 返回 `unknown`
+当前状态：`bash scripts/detect.sh` 输出 `agent=unknown`
 处理方式：直接返回 unknown，不继续猜配置路径，也不开始 setup
 ```
 
@@ -381,9 +360,8 @@ github-fetcher 读取失败时不要回退到 DeepWiki 替代文件读取，反�
 | --- | --- | --- |
 | `mcp__context7__resolve-library-id` | 解析库名称 | `libraryName`, `query` |
 | `mcp__context7__query-docs` | 查询技术文档 | `libraryId`, `query` |
-| `mcp__exa__web_search_exa` | 通用网页搜索 | `query`, `numResults`, `includeDomains` |
-| `mcp__exa__get_code_context_exa` | 代码与技术资料搜索 | `query`, `numResults` |
-| `mcp__fetch__fetch` | 获取已知 URL 的网页正文，不参与搜索 | `url`, `max_length`, `raw` |
+| `mcp__exa__web_search_exa` | 通用网页搜索 | `query`, `numResults`, `allowed_domains` |
+| `mcp__exa__web_fetch_exa` | 批量读取已知 URL 正文 | `urls`, `maxCharacters` |
 | `mcp__mcp-deepwiki__deepwiki_fetch` | GitHub 仓库查询 | `url`, `maxDepth`, `mode` |
 | `mcp__github-fetcher__fetch-file` | 读取 GitHub 仓库文件 | `ownerName`, `repoName`, `filePath` |
 | `mcp__github-fetcher__fetch-sub-tree` | 读取 GitHub 仓库目录结构 | `ownerName`, `repoName`, `dirPath`, `maxDepth` |
