@@ -22,6 +22,7 @@ git config --global https.https://github.com.proxy http://127.0.0.1:7890
 | `plugin-builder` | AI | 创建和管理私有 Claude Code 插件，打包 skills/agents/commands/hooks/MCP 配置 |
 | `remote` | 运维 | 远程访问 Linux 服务器，复用本地保存的服务器信息，支持单条或并行命令 |
 | `search-web` | 通用 | 整合 Context7、Exa、DeepWiki 等工具搜索技术文档、代码示例和网页资料 |
+| `tinyfish` | 工具 | 通过 TinyFish CLI 执行网络搜索、网页抓取、浏览器自动化和批量任务 |
 
 ### 添加单个Skill
 
@@ -52,6 +53,10 @@ npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skil
 
 ```bash
 npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skill search-web
+```
+
+```bash
+npx skills add https://github.com/karthrand/karthrand-ai-public.git -g -y --skill tinyfish
 ```
 
 ### 更新
