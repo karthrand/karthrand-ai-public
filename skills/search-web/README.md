@@ -19,6 +19,7 @@
 - Codex
 - OpenCode
 - QwenCode
+- Hermes
 
 ### 验证安装
 

@@ -43,9 +43,9 @@ graph TD
 固定规则：
 
 1. 使用时先运行 detect.sh 确认初始化状态和真实环境
-2. `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一缺失都先修复
+2. MCP 缺失时先通过 `setup-mcp.sh` 安装，然后提示用户重启以激活
 3. 技术文档问题先走 `Context7`
-4. 联网搜索固定只用 `Exa`，不得切换其他搜索型 MCP
+4. 联网搜索固定使用 `Exa`，不得切换其他搜索型 MCP；不可用时安装并提示重启
 5. `Context7` 之后仍继续走 `Exa`
 6. 命中 GitHub 仓库文档时走 `DeepWiki`，需要读取仓库文件或目录时走 `github-fetcher`
 7. 网页正文读取只允许发生在“已知 URL 的非搜索读取”阶段，不能替代 `Exa`
@@ -59,7 +59,7 @@ graph TD
 4. 如果 credentials/context7 文件不存在或为空，询问是否配置 Context7 Key
 5. 如果 credentials/exa 文件不存在或为空，询问是否配置 Exa Key
 6. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
-7. 如果任一项缺失，立即进入 references/setup.md
+7. 如果任一项缺失，执行 `bash scripts/setup-mcp.sh --mcp all` 安装，然后继续用当前已加载的工具执行搜索
 8. 所有必需项通过后，才开始正式搜索
 ```
 
@@ -128,8 +128,8 @@ parameters:
 固定规则：
 
 - 联网搜索必须使用 `Exa`
-- `Exa` 不可用时，返回 `references/setup.md` 做修复
-- 不得切换到 `open-websearch` 或其他搜索型 MCP
+- `Exa` 不可用时，通过 `setup-mcp.sh` 安装并提示用户重启
+- 不得切换到其他搜索型 MCP
 
 ### 示例 1：通用网页搜索
 
@@ -312,8 +312,8 @@ parameters:
 ### 示例 4：首次使用时先修复依赖
 
 ```text
-当前状态：detect.sh 输出 initialized=false，或 context7 / exa / mcp-deepwiki 任一不可用
-处理方式：先进入 references/setup.md 完成 setup，再返回主流程
+当前状态：detect.sh 输出 initialized=false，或部分 MCP 不可用
+处理方式：执行 `bash scripts/setup-mcp.sh --mcp all` 安装缺失 MCP，创建标志文件，然后告知用户重启以激活
 ```
 
 ### 示例 5：宿主信号冲突时停止
@@ -341,17 +341,16 @@ parameters:
 ### Q3：GitHub 仓库查询失败怎么办？
 
 ```text
-如果是 mcp-deepwiki 或 github-fetcher 缺失或环境错误，先回到 references/setup.md 修复。
+如果是 mcp-deepwiki 或 github-fetcher 缺失或环境错误，通过 `setup-mcp.sh` 安装并提示用户重启。
 如果环境正常但仓库不可达，直接说明仓库可能私有、已删除或当前网络不可达，不把失败包装成已读取成功。
 github-fetcher 读取失败时不要回退到 DeepWiki 替代文件读取，反之亦然。
 ```
 
-### Q4：`Exa` 不可用时能不能换别的搜索 MCP？
+### Q4：`Exa` 不可用时怎么办？
 
 ```text
-不能。
-联网搜索固定只允许 `Exa`。
-`Exa` 缺失、未注册或连接失败时，必须回到 references/setup.md 修复。
+不能切换到其他搜索 MCP。联网搜索固定只允许 `Exa`。
+`Exa` 缺失、未注册或连接失败时，通过 `setup-mcp.sh` 安装并提示用户重启。当前会话无法使用新安装的 MCP。
 ```
 
 ## MCP 工具快速参考

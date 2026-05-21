@@ -42,12 +42,12 @@ description: "当需要网络搜索获取最新资料时使用。搜索技术文
 1. 使用时的第一个步骤，运行 `bash scripts/detect.sh`，解析输出：
    - `initialized=true`：直接进入步骤 2
    - `initialized=false`：进入 `references/setup.md` 执行安装流程
-   **进入 setup 前，先读取 `credentials/` 目录下 `context7` 和 `exa` 文件：文件不存在或为空时询问用户是否配置 Key，用户选择跳过则写入 "skipped"，后续不再询问。**
-   **禁止在 MCP 缺失时用替代工具降级执行搜索任务。**
-   **任何 MCP 在步骤 2-6 执行中报告未注册、连接失败或 server unavailable 时，必须停止当前搜索，回到 `references/setup.md` 修复。**
+   **进入 setup 前，先读取 `credentials/` 目录下 `context7` 和 `exa` 文件：文件不存在或为空时询问用户是否配置 Key，用户选择跳过则写入 "skipped"，后续不再询问。`exa` 的 Key 为可选，不提供时使用无 Key 模式安装。**
+   **MCP 缺失时，先通过 `setup-mcp.sh` 安装（下一会话生效），然后直接告知用户需要重启以激活新 MCP。**
+   **任何 MCP 在步骤 2-6 执行中报告未注册或不可用时，停止当前搜索，告知用户需要重启以加载 MCP。**
 2. 配置项类问题（阈值、开关、flag、option、parameter、env）先读 `references/strategies/config-index-shortcut.md`。
 3. 技术文档先走 `Context7`（先 `resolve-library-id` 再 `query-docs`），模板和错误示例见 `examples/usage.md`。
-4. 联网搜索固定使用 `Exa`，不可替代；不可用时回 `references/setup.md` 修复。Context7 之后继续走 `Exa` 补网页资料。
+4. 联网搜索固定使用 `Exa`，不可替代；不可用时安装并提示用户重启。Context7 之后继续走 `Exa` 补网页资料。
 5. Exa 命中 GitHub 仓库时走 `DeepWiki` 获取文档；需读具体文件或目录时走 `github-fetcher`。
 6. 只有用户已给出明确 URL 或 Exa 已定位后才允许网页正文读取。正文读取不是搜索步骤，不能替代 `Exa`。
 7. 最终按 `references/rules/output-format.md` 组织回答，优先给官方文档，再给网页资料、正文读取结果和仓库信息。
@@ -58,18 +58,18 @@ description: "当需要网络搜索获取最新资料时使用。搜索技术文
 
 - 禁止用 `open-websearch` 或其他搜索型 MCP 替代 `Exa`
 - 禁止用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
-- 禁止在 MCP 缺失时用替代工具降级执行搜索任务
+- MCP 缺失时先通过 `setup-mcp.sh` 安装并提示用户重启，不使用替代工具降级
 
 ## 常见错误
 
 - 跳过 `resolve-library-id` 直接猜测 `libraryId`（Context7 必须两步调用）
 - 缺少 `libraryName` 参数调用 `resolve-library-id`
 - 用 `libraryName` 传给 `query-docs`（应该用 `libraryId`）
-- `Exa` 不可用时切换到其他搜索 MCP（必须回 setup 修复）
+- `Exa` 不可用时切换到其他搜索 MCP（应通过 `setup-mcp.sh` 安装并提示用户重启）
 - 把网页正文读取当成搜索步骤替代 `Exa`
 - 用 `mcp-deepwiki` 替代 `github-fetcher` 读文件，或反之
 - Context7 超过 3 次调用限制后仍继续调用（应转 Exa）
-- setup 状态未通过时跳过直接搜索
+- MCP 未加载时反复进入 setup 循环而不提示用户重启（应安装后提示重启）
 
 ## 按需继续加载
 
@@ -93,6 +93,6 @@ description: "当需要网络搜索获取最新资料时使用。搜索技术文
 - 最终回答前，必须按 `references/rules/output-format.md` 格式化
 - 明确标注来源类型：`Context7`、`Exa`、网页读取、`DeepWiki`、`github-fetcher`
 - 保留原始链接、文档入口或仓库标识
-- 如果 `Exa` 缺失、不可用或环境异常，不允许切换到其他搜索型 MCP，必须直接说明并回到 setup/repair
+- 如果 `Exa` 缺失或不可用，不允许切换到其他搜索型 MCP，直接告知用户需要重启以加载 MCP
 - 如果发生降级、读取失败或信息不足，要直接说明
 - 不编造未读取到的内容

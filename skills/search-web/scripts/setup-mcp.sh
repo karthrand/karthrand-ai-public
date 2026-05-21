@@ -35,7 +35,7 @@ usage() {
 search-web 技能 MCP 自动安装脚本
 
 选项:
-  --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code)
+  --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code|hermes)
                     不传则自动调用 detect.sh 检测
   --os <类型>        目标运行时 OS (windows|linux|macos)
                     不传则自动调用 detect.sh 检测
@@ -138,6 +138,7 @@ check_mcp_list() {
     codex)       codex mcp list 2>/dev/null || echo "" ;;
     opencode)    opencode mcp list 2>/dev/null || echo "" ;;
     qwen-code)   qwen mcp list 2>/dev/null || echo "" ;;
+    hermes)      hermes mcp list 2>/dev/null || echo "" ;;
     *)           echo "" ;;
   esac
 }
@@ -158,6 +159,9 @@ is_mcp_installed() {
       ;;
     opencode)
       printf '%s' "$MCP_LIST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -qw "$mcp"
+      ;;
+    hermes)
+      printf '%s' "$MCP_LIST_OUTPUT" | grep -q "$mcp"
       ;;
     *)
       return 1
@@ -260,6 +264,13 @@ install_stdio_mcp() {
         qwen mcp add -s "$SCOPE" -t stdio "$mcp" npx -y "$npm_pkg"
       fi
       ;;
+    hermes)
+      if is_windows; then
+        hermes mcp add "$mcp" --command "cmd" --args "/c npx -y $npm_pkg"
+      else
+        hermes mcp add "$mcp" --command "npx" --args "-y $npm_pkg"
+      fi
+      ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2
       exit 1
@@ -309,6 +320,9 @@ install_remote_mcp() {
       ;;
     qwen-code)
       qwen mcp add -s "$SCOPE" -t http exa "$exa_url"
+      ;;
+    hermes)
+      hermes mcp add exa --url "$exa_url"
       ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2

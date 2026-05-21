@@ -6,7 +6,7 @@
 
 - `bash scripts/detect.sh` 输出 `initialized=false`（标志文件不存在）
 - `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
-- 需要为 `Claude Code`、`Codex`、`OpenCode` 或 `QwenCode` 配置 `search-web` 的必需 MCP
+- 需要为 `Claude Code`、`Codex`、`OpenCode`、`QwenCode` 或 `Hermes` 配置 `search-web` 的必需 MCP
 
 ## 必需依赖与工具边界
 
@@ -17,11 +17,11 @@
 - `mcp-deepwiki`
 - `github-fetcher`
 
-只有这四项都已安装且真实可用，才允许返回主流程。
+安装完成后创建标志文件并告知用户重启。新安装的 MCP 在重启后生效，当前会话无法使用。
 
-固定边界：
+指定偏好与边界：
 
-- 联网搜索只能使用 `Exa`
+- 联网搜索指定使用 `Exa`
 - `Context7` 只负责技术文档
 - `mcp-deepwiki` 只负责 GitHub 仓库文档
 - `github-fetcher` 只负责 GitHub 仓库文件和目录读取
@@ -48,18 +48,17 @@ initialized=true
 固定规则：
 
 1. `scripts/detect.sh` 必须是从 `skill-harness` 复制过来的物理副本，不能通过跨 skill 相对路径引用，也不能使用符号链接。
-2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`unknown`。
+2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`hermes`、`unknown`。
 3. `os` 只能是 `windows`、`linux`、`macos`、`unknown`。
 4. `state_dir` 所有平台统一为 `~/.config/search-web/`。
 5. `initialized` 通过标志文件 `state_dir/{agent}` 是否存在判定。
-6. 如果 `agent` 输出为 `unknown`，立即停止，不继续猜测配置路径。
+6. 如果 `agent` 输出为 `unknown`，停止 setup 并告知用户无法识别宿主类型，需手动配置 MCP。
 
 禁止做法：
 
 - 自行编写内联宿主检测逻辑
 - 通过 `system prompt`、工具指纹、父进程名或本机命令存在性猜当前宿主
 - 用跨 skill 路径调用别的检测脚本
-- 在 `unknown` 状态下继续执行宿主专属 setup
 
 ## 固定决策
 
@@ -70,6 +69,7 @@ initialized=true
      - 用户选择跳过 → 写入 "skipped" 到对应文件，后续不再询问
    - 文件内容为 "skipped"：用户曾明确跳过，不再询问
    - 文件内容为其他值：已配置，安装 MCP 时自动读取注入
+   - `exa` 的 API Key 为可选；不提供 Key 时使用无 Key URL（`https://mcp.exa.ai/mcp`），安装后仍可正常使用
 3. 调用一次 `xxx mcp list`（如 `claude mcp list`），将输出存为变量，逐项 grep 检查 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已安装。
    - 已安装的跳过，未安装的执行 `setup-mcp.sh` 安装。
    - `mcp list` 只调用一次，后续全部 grep 变量判断，严禁每个 MCP 单独调用。
@@ -115,6 +115,7 @@ initialized=true
 | Codex | `~/.codex/config.toml` |
 | OpenCode | `~/.config/opencode/opencode.json` |
 | QwenCode | `~/.qwen/settings.json` |
+| Hermes | `~/.hermes/config.yaml` |
 
 ## 脚本安装方式（推荐）
 
@@ -163,6 +164,7 @@ bash scripts/setup-mcp.sh --mcp all --force
 - `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.context7]`
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.context7`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.context7`
+- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `context7`
 
 #### `Claude Code`
 
@@ -248,6 +250,34 @@ qwen mcp add -s user -t stdio context7 npx -y @upstash/context7-mcp@latest
 qwen mcp add -s user -t stdio context7 cmd /c npx -y @upstash/context7-mcp@latest
 ```
 
+#### `Hermes`
+
+```bash
+# Unix / macOS
+hermes mcp add context7 --command "npx" --args "-y @upstash/context7-mcp@latest"
+
+# Windows
+hermes mcp add context7 --command "cmd" --args "/c npx -y @upstash/context7-mcp@latest"
+```
+
+或手动编辑 `~/.hermes/config.yaml`：
+
+```yaml
+mcp_servers:
+  context7:
+    command: "npx"
+    args: ["-y", "@upstash/context7-mcp@latest"]
+```
+
+Windows：
+
+```yaml
+mcp_servers:
+  context7:
+    command: "cmd"
+    args: ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
+```
+
 ### 2. `exa`
 
 #### 检测方式
@@ -256,6 +286,7 @@ qwen mcp add -s user -t stdio context7 cmd /c npx -y @upstash/context7-mcp@lates
 - `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.exa]`
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.exa`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.exa`
+- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `exa`
 
 #### `Claude Code`
 
@@ -347,6 +378,28 @@ qwen mcp add -s user -t http exa https://mcp.exa.ai/mcp
 qwen mcp add -s user -t http exa "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
 ```
 
+#### `Hermes`
+
+无 key：
+
+```bash
+hermes mcp add exa --url "https://mcp.exa.ai/mcp"
+```
+
+有 key：
+
+```bash
+hermes mcp add exa --url "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
+```
+
+或手动编辑 `~/.hermes/config.yaml`：
+
+```yaml
+mcp_servers:
+  exa:
+    url: "https://mcp.exa.ai/mcp"
+```
+
 ### 3. `mcp-deepwiki`
 
 #### 检测方式
@@ -355,6 +408,7 @@ qwen mcp add -s user -t http exa "https://mcp.exa.ai/mcp?exaApiKey=从credential
 - `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.mcp-deepwiki]`
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.mcp-deepwiki`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.mcp-deepwiki`
+- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `mcp-deepwiki`
 
 #### `Claude Code`
 
@@ -440,6 +494,25 @@ qwen mcp add -s user -t stdio mcp-deepwiki npx -y mcp-deepwiki@latest
 qwen mcp add -s user -t stdio mcp-deepwiki cmd /c npx -y mcp-deepwiki@latest
 ```
 
+#### `Hermes`
+
+```bash
+# Unix / macOS
+hermes mcp add mcp-deepwiki --command "npx" --args "-y mcp-deepwiki@latest"
+
+# Windows
+hermes mcp add mcp-deepwiki --command "cmd" --args "/c npx -y mcp-deepwiki@latest"
+```
+
+或手动编辑 `~/.hermes/config.yaml`：
+
+```yaml
+mcp_servers:
+  mcp-deepwiki:
+    command: "npx"
+    args: ["-y", "mcp-deepwiki@latest"]
+```
+
 ### 4. `github-fetcher`
 
 #### 检测方式
@@ -448,6 +521,7 @@ qwen mcp add -s user -t stdio mcp-deepwiki cmd /c npx -y mcp-deepwiki@latest
 - `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.github-fetcher]`
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.github-fetcher`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.github-fetcher`
+- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `github-fetcher`
 
 #### `Claude Code`
 
@@ -533,13 +607,38 @@ qwen mcp add -s user -t stdio github-fetcher npx -y github-fetcher-mcp
 qwen mcp add -s user -t stdio github-fetcher cmd /c npx -y github-fetcher-mcp
 ```
 
+#### `Hermes`
+
+```bash
+# Unix / macOS
+hermes mcp add github-fetcher --command "npx" --args "-y github-fetcher-mcp"
+
+# Windows
+hermes mcp add github-fetcher --command "cmd" --args "/c npx -y github-fetcher-mcp"
+```
+
+或手动编辑 `~/.hermes/config.yaml`：
+
+```yaml
+mcp_servers:
+  github-fetcher:
+    command: "npx"
+    args: ["-y", "github-fetcher-mcp"]
+```
+
 ## 成功标准
 
-- 当前宿主里已经存在有效的 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 配置
-- 宿主识别由 `bash scripts/detect.sh` 完成，且 `agent` 和 `os` 都不是 `unknown`
-- 通过一次 `xxx mcp list` 确认四项都已注册可用
+- 缺失的 MCP 已通过 `setup-mcp.sh` 安装（注册到配置文件）
 - 标志文件 `{state_dir}/{agent}` 已创建
-- 返回主流程前，不再存在必需 MCP 缺失项
+- 告知用户需要重启以激活新安装的 MCP
+- 重启后四项 MCP 均应可用
+
+## 重启说明
+
+`claude mcp add` / `codex mcp add` / `hermes mcp add` 等命令将 MCP 注册到配置文件，但不会在当前会话中加载。这是所有 code agent 的共同行为：
+- 安装完成后，MCP 配置已写入，但当前会话仍无法使用
+- 用户重启 code agent 后，新 MCP 才会被加载
+- 安装完成后应告知用户重启，不在当前会话中尝试使用未加载的 MCP
 
 ## 常见错误
 
@@ -552,4 +651,5 @@ qwen mcp add -s user -t stdio github-fetcher cmd /c npx -y github-fetcher-mcp
 - 用户明确没有 key，却仍然给 `exa` 传入占位符 key
 - 用户明确有 key，却不先索取就直接写配置
 - 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具
+- 安装 MCP 后不提示用户重启，或不继续用可用工具执行搜索
 - 用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
