@@ -251,6 +251,13 @@ function Build-RemoteShArgs {
 }
 
 function Get-BashCommand {
+    # 优先使用宿主指定的 Git Bash（Claude Code > opencode）
+    $envPaths = @($env:CLAUDE_CODE_GIT_BASH_PATH, $env:OPENCODE_GIT_BASH_PATH)
+    foreach ($p in $envPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path $p)) {
+            return [PSCustomObject]@{ Source = $p }
+        }
+    }
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($null -eq $bash) {
         throw "Windows 下 remote skill 必须通过 bash -lc 执行，但当前环境未检测到 bash。"
@@ -262,7 +269,8 @@ function Get-BashCommand {
 function Get-RuntimeType {
     param([string]$BashPath)
 
-    $runtimeType = (& $BashPath -lc "source ./runtime.sh; remote_detect_runtime_type").Trim()
+    $runtimeSh = (Join-Path $PSScriptRoot "runtime.sh") -replace '\\','/'
+    $runtimeType = (& $BashPath -lc "source '$runtimeSh'; remote_detect_runtime_type").Trim()
     if ([string]::IsNullOrWhiteSpace($runtimeType) -or $runtimeType -eq "unknown") {
         throw "未识别到当前执行环境，无法安全执行 remote skill。"
     }
@@ -271,35 +279,28 @@ function Get-RuntimeType {
 }
 
 $bash = Get-BashCommand
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-Push-Location $scriptDir
-try {
-    $runtimeType = Get-RuntimeType -BashPath $bash.Source
-    if ($runtimeType -ne "windows-msys" -and $runtimeType -ne "linux-wsl") {
-        throw "当前执行环境不受支持：$runtimeType"
-    }
-
-    $parsedArgs = Parse-InvocationArguments -RawArgs $args
-    $remoteShArgs = Build-RemoteShArgs -ParsedArgs $parsedArgs
-
-    $quoted = New-Object System.Collections.Generic.List[string]
-    $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
-    $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
-    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
-    }
-    $quoted.Add((Quote-BashArg -Value "./remote.sh"))
-    foreach ($arg in $remoteShArgs) {
-        $quoted.Add((Quote-BashArg -Value ([string]$arg)))
-    }
-
-    $commandString = [string]::Join(' ', $quoted)
-    Write-Log "Windows 下固定通过 bash -lc 调用 remote.sh。当前执行环境：$runtimeType。"
-
-    & $bash.Source -lc $commandString
-    exit $LASTEXITCODE
+$runtimeType = Get-RuntimeType -BashPath $bash.Source
+if ($runtimeType -ne "windows-msys" -and $runtimeType -ne "linux-wsl") {
+    throw "当前执行环境不受支持：$runtimeType"
 }
-finally {
-    Pop-Location
+
+$parsedArgs = Parse-InvocationArguments -RawArgs $args
+$remoteShArgs = Build-RemoteShArgs -ParsedArgs $parsedArgs
+
+$quoted = New-Object System.Collections.Generic.List[string]
+$quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
+$quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
+if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
 }
+$quoted.Add((Quote-BashArg -Value "./remote.sh"))
+foreach ($arg in $remoteShArgs) {
+    $quoted.Add((Quote-BashArg -Value ([string]$arg)))
+}
+
+$commandString = [string]::Join(' ', $quoted)
+Write-Log "Windows 下固定通过 bash -lc 调用 remote.sh。当前执行环境：$runtimeType。"
+
+& $bash.Source -lc $commandString
+exit $LASTEXITCODE

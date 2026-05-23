@@ -39,6 +39,13 @@ function Write-Utf8NoBomFile {
 }
 
 function Get-BashCommand {
+    # 优先使用宿主指定的 Git Bash（Claude Code > opencode）
+    $envPaths = @($env:CLAUDE_CODE_GIT_BASH_PATH, $env:OPENCODE_GIT_BASH_PATH)
+    foreach ($p in $envPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path $p)) {
+            return [PSCustomObject]@{ Source = $p }
+        }
+    }
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($null -eq $bash) {
         throw "Windows 下 remote skill 必须通过 bash -lc 执行，但当前环境未检测到 bash。"
@@ -50,7 +57,8 @@ function Get-BashCommand {
 function Get-RuntimeType {
     param([string]$BashPath)
 
-    $runtimeType = (& $BashPath -lc "source ./runtime.sh; remote_detect_runtime_type").Trim()
+    $runtimeSh = (Join-Path $PSScriptRoot "runtime.sh") -replace '\\','/'
+    $runtimeType = (& $BashPath -lc "source '$runtimeSh'; remote_detect_runtime_type").Trim()
     if ([string]::IsNullOrWhiteSpace($runtimeType) -or $runtimeType -eq "unknown") {
         throw "未识别到当前执行环境，无法安全完成 remote setup。"
     }
@@ -158,51 +166,44 @@ function Write-BootstrapState {
 }
 
 $bash = Get-BashCommand
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-Push-Location $scriptDir
-try {
-    $runtimeType = Get-RuntimeType -BashPath $bash.Source
+$runtimeType = Get-RuntimeType -BashPath $bash.Source
 
-    if ($runtimeType -eq "linux-wsl") {
-        Write-Log "当前执行环境为 linux-wsl，改为在 WSL 内安装 Linux sshpass。"
-        $quoted = New-Object System.Collections.Generic.List[string]
-        $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
-        $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
-        if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-            $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
-        }
-        $quoted.Add((Quote-BashArg -Value "./setup.sh"))
-        if ($Force) {
-            $quoted.Add("--force")
-        }
-
-        & $bash.Source -lc ([string]::Join(' ', $quoted))
-        exit $LASTEXITCODE
+if ($runtimeType -eq "linux-wsl") {
+    Write-Log "当前执行环境为 linux-wsl，改为在 WSL 内安装 Linux sshpass。"
+    $quoted = New-Object System.Collections.Generic.List[string]
+    $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
+    $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
+    }
+    $quoted.Add((Quote-BashArg -Value "./setup.sh"))
+    if ($Force) {
+        $quoted.Add("--force")
     }
 
-    if ($runtimeType -ne "windows-msys") {
-        throw "当前执行环境不受支持：$runtimeType"
-    }
-
-    # Windows: 验证 SSH 可用性（使用 SSH_ASKPASS 机制，不安装 sshpass）
-    if ((-not $Force) -and (Test-SshAvailable)) {
-        Write-Log "检测到可用 SSH，跳过安装。"
-    } else {
-        if (-not (Test-SshAvailable)) {
-            throw "未检测到可用的 SSH。Windows 下 SSH 通常随 Git for Windows 或 MSYS2 提供，请确认已安装。"
-        }
-    }
-
-    $verified = Test-SshAvailable
-    Write-BootstrapState -SshInstalled $verified -RuntimeType $runtimeType -BashPath $bash.Source
-    if (-not $verified) {
-        throw "SSH 验证失败，无法完成 Windows 远程访问环境设置。"
-    }
-
-    Write-Log "SSH 已完成验证（使用 SSH_ASKPASS 机制），状态文件已写入 $(Get-BootstrapStateFile)"
-    Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前执行环境为 $runtimeType。"
+    & $bash.Source -lc ([string]::Join(' ', $quoted))
+    exit $LASTEXITCODE
 }
-finally {
-    Pop-Location
+
+if ($runtimeType -ne "windows-msys") {
+    throw "当前执行环境不受支持：$runtimeType"
 }
+
+# Windows: 验证 SSH 可用性（使用 SSH_ASKPASS 机制，不安装 sshpass）
+if ((-not $Force) -and (Test-SshAvailable)) {
+    Write-Log "检测到可用 SSH，跳过安装。"
+} else {
+    if (-not (Test-SshAvailable)) {
+        throw "未检测到可用的 SSH。Windows 下 SSH 通常随 Git for Windows 或 MSYS2 提供，请确认已安装。"
+    }
+}
+
+$verified = Test-SshAvailable
+Write-BootstrapState -SshInstalled $verified -RuntimeType $runtimeType -BashPath $bash.Source
+if (-not $verified) {
+    throw "SSH 验证失败，无法完成 Windows 远程访问环境设置。"
+}
+
+Write-Log "SSH 已完成验证（使用 SSH_ASKPASS 机制），状态文件已写入 $(Get-BootstrapStateFile)"
+Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前执行环境为 $runtimeType。"
