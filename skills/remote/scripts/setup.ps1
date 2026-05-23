@@ -166,6 +166,7 @@ function Write-BootstrapState {
 }
 
 $bash = Get-BashCommand
+$scriptDir = $PSScriptRoot
 
 $runtimeType = Get-RuntimeType -BashPath $bash.Source
 
@@ -177,7 +178,7 @@ if ($runtimeType -eq "linux-wsl") {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
     }
-    $quoted.Add((Quote-BashArg -Value "./setup.sh"))
+    $quoted.Add((Quote-BashArg -Value (($scriptDir -replace '\\','/') + '/setup.sh')))
     if ($Force) {
         $quoted.Add("--force")
     }

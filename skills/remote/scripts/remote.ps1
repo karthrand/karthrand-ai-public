@@ -279,6 +279,7 @@ function Get-RuntimeType {
 }
 
 $bash = Get-BashCommand
+$scriptDir = $PSScriptRoot
 
 $runtimeType = Get-RuntimeType -BashPath $bash.Source
 if ($runtimeType -ne "windows-msys" -and $runtimeType -ne "linux-wsl") {
@@ -294,7 +295,7 @@ $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace
 if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
     $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
 }
-$quoted.Add((Quote-BashArg -Value "./remote.sh"))
+$quoted.Add((Quote-BashArg -Value (($scriptDir -replace '\\','/') + '/remote.sh')))
 foreach ($arg in $remoteShArgs) {
     $quoted.Add((Quote-BashArg -Value ([string]$arg)))
 }
