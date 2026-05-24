@@ -5,7 +5,7 @@
 ## 何时读取本文件
 
 - 只需要最小执行流程时，不读本文件，直接按 `SKILL.md` 执行
-- 需要 `Context7`、`Exa`、网页正文读取或 `DeepWiki` 的参数示例时，读取对应章节
+- 需要 `Context7`、`Exa`、`TinyFish`、网页正文读取或 `DeepWiki` 的参数示例时，读取对应章节
 - 需要 `Context7` 的错误示范、调用顺序示例或多源整合案例时，优先读取“Context7 文档搜索”
 - 需要网页读取降级策略时，读取“网页正文读取降级”
 - 需要常见失败场景或排障提示时，读取“常见问题处理”
@@ -17,7 +17,7 @@
 graph TD
     A[用户查询] --> B[运行 detect.sh 检查初始化状态]
     B --> C{credentials 需询问?}
-    C -->|是| C1[依次询问 context7/exa Key]
+    C -->|是| C1[依次询问 context7/exa/tinyfish Key]
     C1 --> B
     C -->|否| D{必需 MCP 都可用?}
     D -->|否| E[进入 setup 或 repair]
@@ -29,11 +29,14 @@ graph TD
     H -->|是| I[Context7]
     H -->|否| J[Exa]
     I --> J
-    J --> K{命中类型}
-    K -->|网页正文| L[已知 URL 后正文读取]
-    K -->|GitHub 文档| M[DeepWiki]
-    K -->|GitHub 文件| N[github-fetcher]
-    K -->|普通网页| O[整理搜索结果]
+    J --> K{Exa 成功?}
+    K -->|否| TF[TinyFish 备用搜索]
+    K -->|是| R{命中类型}
+    TF --> R
+    R -->|网页正文| L[已知 URL 后正文读取]
+    R -->|GitHub 文档| M[DeepWiki]
+    R -->|GitHub 文件| N[github-fetcher]
+    R -->|普通网页| O[整理搜索结果]
     L --> P[整合回答]
     M --> P
     N --> P
@@ -45,22 +48,25 @@ graph TD
 1. 使用时先运行 detect.sh 确认初始化状态和真实环境
 2. MCP 缺失时先通过 `setup-mcp.sh` 安装，然后提示用户重启以激活
 3. 技术文档问题先走 `Context7`
-4. 联网搜索固定使用 `Exa`，不得切换其他搜索型 MCP；不可用时安装并提示重启
+4. 联网搜索先使用 `Exa`；`Exa` 搜索失败、额度到限、服务不可用或空结果时，切换到 `TinyFish` CLI
 5. `Context7` 之后仍继续走 `Exa`
 6. 命中 GitHub 仓库文档时走 `DeepWiki`，需要读取仓库文件或目录时走 `github-fetcher`
-7. 网页正文读取只允许发生在“已知 URL 的非搜索读取”阶段，不能替代 `Exa`
+7. 网页正文读取只允许发生在“已知 URL 的非搜索读取”阶段；宿主读取失败时可用 `tinyfish fetch content get`
 
 ## 首次使用示例
 
 ```text
 1. 运行 bash scripts/detect.sh（无参数），解析输出
 2. 如果 agent=unknown，立即停止 setup 并说明无法识别当前宿主
-3. 检查 credentials/ 目录下 context7 和 exa 文件
+3. 检查 credentials/ 目录下 context7、exa 和 tinyfish 文件
 4. 如果 credentials/context7 文件不存在或为空，询问是否配置 Context7 Key
 5. 如果 credentials/exa 文件不存在或为空，询问是否配置 Exa Key
-6. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
-7. 如果任一项缺失，执行 `bash scripts/setup-mcp.sh --mcp all` 安装，然后继续用当前已加载的工具执行搜索
-8. 所有必需项通过后，才开始正式搜索
+6. 如果 credentials/tinyfish 文件不存在或为空，但当前环境已有 TINYFISH_API_KEY，先写回 credentials/tinyfish 并跳过询问
+7. 如果 credentials/tinyfish 文件不存在或为空，且当前环境没有 TINYFISH_API_KEY，询问是否配置 TinyFish Key
+8. 用户提供 TinyFish Key 后，写入 credentials/tinyfish，并永久写入 TINYFISH_API_KEY
+9. 逐项复验 context7、exa、mcp-deepwiki、github-fetcher
+10. 如果任一项缺失，执行 `bash scripts/setup-mcp.sh --mcp all` 安装，告知用户重启并停止当前搜索
+11. 四项 MCP 已在当前会话可用后，才开始正式搜索
 ```
 
 ## Context7 文档搜索
@@ -73,7 +79,7 @@ graph TD
 4. 从解析结果中选择 `libraryId`
 5. 调用 `mcp__context7__query-docs({ libraryId, query })`
 6. 再调用 `Exa` 补网页资料、最新信息或官方入口
-7. 不允许用其他搜索型 MCP 代替 `Exa`
+7. `Exa` 失败、额度到限、服务不可用或空结果时，按 `../references/tinyfish-fallback.md` 使用 `TinyFish`
 
 ### 选择结果的规则
 
@@ -127,9 +133,10 @@ parameters:
 
 固定规则：
 
-- 联网搜索必须使用 `Exa`
-- `Exa` 不可用时，通过 `setup-mcp.sh` 安装并提示用户重启
-- 不得切换到其他搜索型 MCP
+- 联网搜索先使用 `Exa`
+- `Exa` 失败、额度到限、服务不可用或空结果时，切换到 `TinyFish` CLI
+- 降级时必须说明 `Exa` 的失败原因
+- 不得切换到未指定搜索工具
 
 ### 示例 1：通用网页搜索
 
@@ -150,13 +157,34 @@ parameters:
   numResults: 5
 ```
 
+## TinyFish 备用搜索
+
+固定前提：
+
+- 仅在 `Exa` 搜索失败、额度到限、服务不可用或空结果时使用
+- 使用前先确认 `credentials/tinyfish` 不是 `skipped`
+- 使用前确保 `TINYFISH_API_KEY` 已从 `credentials/tinyfish` 注入当前会话
+- 完整安装、Key 写入和正文抓取规则见 `../references/tinyfish-fallback.md`
+
+### 示例 1：备用搜索
+
+```bash
+tinyfish search query "Next.js 15 release notes"
+```
+
+### 示例 2：地区化搜索
+
+```bash
+tinyfish search query "best restaurants in Tokyo" --location "Japan" --language "ja"
+```
+
 ## 网页正文读取降级
 
 固定前提：
 
-- 用户已经给出明确 URL，或 `Exa` 已经命中目标网页
+- 用户已经给出明确 URL，或 `Exa` / `TinyFish` 已经命中目标网页
 - 本阶段是“读取正文”，不是“继续搜索”
-- 如果宿主没有提供正文读取工具，就只返回链接与失败说明
+- 如果宿主没有提供正文读取工具或读取失败，可用 `tinyfish fetch content get` 备用
 
 ### 读取策略
 
@@ -164,7 +192,9 @@ parameters:
 graph LR
     A[需要网页正文] --> B[宿主网页读取工具]
     B -->|成功| C[返回 Markdown]
-    B -->|不可用| D[只返回链接与失败说明]
+    B -->|不可用或失败| D[TinyFish fetch content get]
+    D -->|成功| C
+    D -->|失败| E[返回链接与失败说明]
 ```
 
 ### 完整示例
@@ -176,6 +206,9 @@ original_url: "https://example.com/blog/article"
 tool: mcp__web-reader__webReader
 parameters:
   url: "https://example.com/blog/article"
+
+# 宿主读取失败后，使用 TinyFish 备用
+command: tinyfish fetch content get "https://example.com/blog/article" --format markdown
 ```
 
 ## GitHub 仓库查询
@@ -235,7 +268,7 @@ parameters:
 ### 示例 1：技术文档 + 网页补充
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验；TinyFish Key 已按需写入 credentials/tinyfish 和 TINYFISH_API_KEY
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -254,12 +287,15 @@ parameters:
   query: "React Server Components official guide migration pitfalls"
   numResults: 5
   allowed_domains: ["react.dev"]
+
+# Exa 失败、额度到限、服务不可用或空结果时
+command: tinyfish search query "React Server Components official guide migration pitfalls"
 ```
 
 ### 示例 2：最新资讯
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验；TinyFish Key 已按需写入 credentials/tinyfish 和 TINYFISH_API_KEY
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -277,12 +313,15 @@ tool: mcp__exa__web_search_exa
 parameters:
   query: "Next.js 15 release notes new features"
   numResults: 5
+
+# Exa 失败、额度到限、服务不可用或空结果时
+command: tinyfish search query "Next.js 15 release notes new features"
 ```
 
 ### 示例 3：文档 + 仓库联合分析
 
 ```yaml
-# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验
+# 前置检查：已通过 bash scripts/detect.sh 确认 initialized=true，且 context7、exa、mcp-deepwiki 已通过复验；TinyFish Key 已按需写入 credentials/tinyfish 和 TINYFISH_API_KEY
 
 # 第一阶段：Context7
 tool: mcp__context7__resolve-library-id
@@ -313,7 +352,8 @@ parameters:
 
 ```text
 当前状态：detect.sh 输出 initialized=false，或部分 MCP 不可用
-处理方式：执行 `bash scripts/setup-mcp.sh --mcp all` 安装缺失 MCP，创建标志文件，然后告知用户重启以激活
+处理方式：执行 `bash scripts/setup-mcp.sh --mcp all` 安装缺失 MCP，创建标志文件，然后告知用户重启以激活，并停止当前搜索
+TinyFish 不是 MCP，缺失时提示 `npm install -g @tiny-fish/cli`，并按 `credentials/tinyfish` 写入 `TINYFISH_API_KEY`
 ```
 
 ### 示例 5：宿主信号冲突时停止
@@ -349,8 +389,10 @@ github-fetcher 读取失败时不要回退到 DeepWiki 替代文件读取，反�
 ### Q4：`Exa` 不可用时怎么办？
 
 ```text
-不能切换到其他搜索 MCP。联网搜索固定只允许 `Exa`。
-`Exa` 缺失、未注册或连接失败时，通过 `setup-mcp.sh` 安装并提示用户重启。当前会话无法使用新安装的 MCP。
+先判断失败类型。
+如果是 MCP 未注册或未加载，通过 `setup-mcp.sh` 安装并提示用户重启。
+如果是搜索失败、额度到限、服务不可用或空结果，读取 `credentials/tinyfish`，确保 `TINYFISH_API_KEY` 已注入当前会话，然后运行 `tinyfish search query`。
+如果 `credentials/tinyfish=skipped`、CLI 未安装或 Key 不可用，直接说明 TinyFish 不可用。
 ```
 
 ## MCP 工具快速参考
@@ -365,3 +407,10 @@ github-fetcher 读取失败时不要回退到 DeepWiki 替代文件读取，反�
 | `mcp__github-fetcher__fetch-file` | 读取 GitHub 仓库文件 | `ownerName`, `repoName`, `filePath` |
 | `mcp__github-fetcher__fetch-sub-tree` | 读取 GitHub 仓库目录结构 | `ownerName`, `repoName`, `dirPath`, `maxDepth` |
 | `mcp__github-fetcher__fetch-subdir-tree` | 读取 GitHub 仓库子目录 | `ownerName`, `repoName`, `dirPath` |
+
+## CLI 备用工具快速参考
+
+| 工具 | 用途 | 关键参数 |
+| --- | --- | --- |
+| `tinyfish search query` | Exa 失败后的备用网页搜索 | 查询文本、`--location`、`--language` |
+| `tinyfish fetch content get` | 已知 URL 后的备用正文抓取 | URL、`--format markdown`、`--links` |

@@ -1,6 +1,6 @@
 # Search-Web
 
-集成多源搜索的技术查询技能，整合 Context7 文档查询、Exa 网络搜索、DeepWiki 仓库文档和 github-fetcher 仓库文件读取。
+集成多源搜索的技术查询技能，整合 Context7 文档查询、Exa 网络搜索、TinyFish 备用搜索、DeepWiki 仓库文档和 github-fetcher 仓库文件读取。
 
 ## 前置条件
 
@@ -12,6 +12,12 @@
 | **exa** | 网络搜索 | 远程 HTTP |
 | **mcp-deepwiki** | GitHub 仓库文档查询 | stdio (npx) |
 | **github-fetcher** | GitHub 仓库文件与目录读取 | stdio (npx) |
+
+### 可选 CLI 备用工具
+
+| CLI 工具 | 用途 | 安装方式 |
+|----------|------|----------|
+| **tinyfish** | Exa 失败后的备用网页搜索与正文抓取 | `npm install -g @tiny-fish/cli` |
 
 ### 支持的 Code Agent
 
@@ -36,13 +42,19 @@ flowchart TD
 
     CheckCreds -->|context7 hasApiKey=false| AskC7[询问是否配置 Context7 API Key]
     CheckCreds -->|exa hasApiKey=false| AskExa[询问是否配置 Exa API Key]
+    CheckCreds -->|tinyfish 缺失且 TINYFISH_API_KEY 已存在| SaveTinyEnv[写回 credentials/tinyfish<br/>并确保永久环境变量]
+    CheckCreds -->|tinyfish hasApiKey=false| AskTiny[询问是否配置 TinyFish API Key]
     CheckCreds -->|Key 齐全或已跳过| Setup[进入 setup 流程]
     AskC7 -->|用户提供| SaveC7Key[写入 credentials/context7]
     AskC7 -->|用户跳过| AskExa
     AskExa -->|用户提供| SaveExaKey[写入 credentials/exa]
-    AskExa -->|用户跳过| Setup
+    AskExa -->|用户跳过| AskTiny
+    AskTiny -->|用户提供| SaveTinyKey[写入 credentials/tinyfish<br/>并设置 TINYFISH_API_KEY]
+    AskTiny -->|用户跳过| Setup
     SaveC7Key --> CheckCreds
     SaveExaKey --> CheckCreds
+    SaveTinyKey --> CheckCreds
+    SaveTinyEnv --> CheckCreds
 
     Setup --> Detect[1. detect.sh（无参数）]
     Detect --> CheckMCP[2. 逐项检测 4 个 MCP]
@@ -58,7 +70,10 @@ flowchart TD
     C7Check -->|是| C7[Context7: resolve --> query]
     C7Check -->|否| Exa[Exa 网络搜索]
     C7 --> Exa
-    Exa --> ResultType{命中类型}
+    Exa --> ExaOK{Exa 成功?}
+    ExaOK -->|否| TinyFish[TinyFish 备用搜索]
+    ExaOK -->|是| ResultType{命中类型}
+    TinyFish --> ResultType
     ResultType -->|网页| WebRead[正文读取]
     ResultType -->|GitHub 文档| DeepWiki[mcp-deepwiki]
     ResultType -->|GitHub 文件| GHFetcher[github-fetcher]
@@ -76,6 +91,7 @@ flowchart TD
     style InstallMCP fill:#ffebee
     style AskC7 fill:#fce4ec
     style AskExa fill:#fce4ec
+    style AskTiny fill:#fce4ec
 ```
 
 ## 手动初始化
@@ -92,6 +108,9 @@ bash scripts/setup-mcp.sh --mcp exa
 bash scripts/setup-mcp.sh --mcp mcp-deepwiki
 bash scripts/setup-mcp.sh --mcp github-fetcher
 
+# 3. 安装 TinyFish 备用 CLI（可选但推荐）
+npm install -g @tiny-fish/cli
+
 # 或手动按宿主类型配置（见 references/setup.md）
 ```
 
@@ -99,13 +118,13 @@ bash scripts/setup-mcp.sh --mcp github-fetcher
 
 ## MCP 使用边界
 
-| 搜索目标 | 使用的 MCP | 说明 |
+| 搜索目标 | 使用的工具 | 说明 |
 |---------|-----------|------|
 | 技术文档 | Context7 | 固定顺序：先 resolve-library-id 再 query-docs |
-| 网络搜索 | Exa | 不得使用其他搜索型 MCP 替代 |
+| 网络搜索 | Exa / TinyFish | Exa 优先；失败、额度到限、服务不可用或空结果时使用 TinyFish |
 | GitHub 仓库文档 | mcp-deepwiki | 仓库级别的文档概览和深读 |
 | GitHub 仓库文件/目录 | github-fetcher | 读取具体文件内容或目录结构 |
-| 网页正文 | 宿主提供的读取工具 | 仅在已知 URL 后使用，不能替代 Exa |
+| 网页正文 | 宿主提供的读取工具 / TinyFish | 仅在已知 URL 后使用；宿主读取失败时可用 TinyFish |
 
 ## 目录结构
 
@@ -118,6 +137,7 @@ search-web/
 │   └── setup-mcp.sh                      # MCP 安装脚本
 ├── references/
 │   ├── setup.md                          # 初始化配置指南
+│   ├── tinyfish-fallback.md              # TinyFish 备用搜索与正文抓取
 │   ├── rules/
 │   │   └── output-format.md              # 输出格式规范
 │   └── strategies/

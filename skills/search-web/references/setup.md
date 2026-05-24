@@ -6,6 +6,7 @@
 
 - `bash scripts/detect.sh` 输出 `initialized=false`（标志文件不存在）
 - `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
+- `Exa` 失败后需要启用 `TinyFish` 备用搜索，但 `TinyFish` CLI、`credentials/tinyfish` 或 `TINYFISH_API_KEY` 未配置
 - 需要为 `Claude Code`、`Codex`、`OpenCode`、`QwenCode` 或 `Hermes` 配置 `search-web` 的必需 MCP
 
 ## 必需依赖与工具边界
@@ -17,16 +18,20 @@
 - `mcp-deepwiki`
 - `github-fetcher`
 
+可选 CLI 备用依赖：
+
+- `tinyfish`（通过 `npm install -g @tiny-fish/cli` 安装）
+
 安装完成后创建标志文件并告知用户重启。新安装的 MCP 在重启后生效，当前会话无法使用。
 
 指定偏好与边界：
 
-- 联网搜索指定使用 `Exa`
+- 联网搜索优先使用 `Exa`，仅在 `Exa` 搜索失败、额度到限、服务不可用或空结果时使用 `TinyFish` CLI
 - `Context7` 只负责技术文档
 - `mcp-deepwiki` 只负责 GitHub 仓库文档
 - `github-fetcher` 只负责 GitHub 仓库文件和目录读取
-- 网页正文读取不属于必需 MCP；只有用户已给出明确 URL，或 `Exa` 已经定位到目标网页后，才允许使用宿主已提供的正文读取工具
-- 不得把其他搜索型 MCP 当成 `Exa` 的替代品
+- 网页正文读取不属于必需 MCP；只有用户已给出明确 URL，或 `Exa` / `TinyFish` 已经定位到目标网页后，才允许使用宿主已提供的正文读取工具
+- 不得把其他搜索型 MCP 当成 `Exa` 的替代品；指定备用只允许 `TinyFish` CLI
 - 不得用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，反之亦然
 
 ## 宿主识别方式
@@ -63,19 +68,23 @@ initialized=true
 ## 固定决策
 
 1. 运行 `bash scripts/detect.sh`（无参数），获取 agent、os、state_dir、initialized 四项信息。
-2. 检查 `credentials/` 目录下 `context7` 和 `exa` 文件：
+2. 检查 `credentials/` 目录下 `context7`、`exa` 和 `tinyfish` 文件：
    - 文件不存在或为空：询问用户"是否配置 API Key？"
      - 用户选择配置 → 写入 Key 值到对应文件
      - 用户选择跳过 → 写入 "skipped" 到对应文件，后续不再询问
    - 文件内容为 "skipped"：用户曾明确跳过，不再询问
    - 文件内容为其他值：已配置，安装 MCP 时自动读取注入
    - `exa` 的 API Key 为可选；不提供 Key 时使用无 Key URL（`https://mcp.exa.ai/mcp`），安装后仍可正常使用
+   - `tinyfish` 的 API Key 必须同步到永久环境变量 `TINYFISH_API_KEY`；如果 `credentials/tinyfish` 已存在且非空，跳过询问，直接确保环境变量已写入；如果 `credentials/tinyfish` 缺失但当前环境已有 `TINYFISH_API_KEY`，先写回 `credentials/tinyfish` 并跳过询问
 3. 调用一次 `xxx mcp list`（如 `claude mcp list`），将输出存为变量，逐项 grep 检查 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已安装。
    - 已安装的跳过，未安装的执行 `setup-mcp.sh` 安装。
    - `mcp list` 只调用一次，后续全部 grep 变量判断，严禁每个 MCP 单独调用。
-4. 所有缺失 MCP 安装完成后，创建标志文件 `{state_dir}/{agent}`，使 `initialized=true`。
-5. 四项都可用时，返回主流程，不重复 setup。
-6. `exa` 需要 key 时，优先从 `credentials/exa` 文件读取已存储的 Key；如未存储，再询问。
+4. 仅在需要启用 `TinyFish` 备用搜索，或用户已配置 `credentials/tinyfish` 时检查 `tinyfish` CLI：
+   - 未安装：提示运行 `npm install -g @tiny-fish/cli`
+   - 已安装：继续使用 `credentials/tinyfish` 和 `TINYFISH_API_KEY` 管理备用搜索能力
+5. 所有缺失 MCP 安装完成后，创建标志文件 `{state_dir}/{agent}`，使 `initialized=true`。
+6. 四项 MCP 都可用时，返回主流程，不重复 setup。
+7. `exa` 需要 key 时，优先从 `credentials/exa` 文件读取已存储的 Key；如未存储，再询问。
 
 ## 状态管理
 
@@ -88,6 +97,7 @@ initialized=true
   credentials/
     context7                         # API Key 值、"skipped"、或空
     exa                              # API Key 值、"skipped"、或空
+    tinyfish                         # API Key 值、"skipped"、或空；非 skipped 时同步到 TINYFISH_API_KEY
 ```
 
 ### 标志文件规则
@@ -104,6 +114,71 @@ initialized=true
 - 文件内容为其他值：已配置，安装 MCP 时自动读取注入
 - Key 存储在 `credentials/` 目录下的独立文件中，跨 agent 共享
 - 多 code agent 共享同一 `credentials/`，只需询问一次 Key
+- `credentials/tinyfish` 文件内容为其他值时，后续 setup 不再询问用户，但必须确保该值已永久写入 `TINYFISH_API_KEY`
+
+## TinyFish CLI 备用搜索
+
+`TinyFish` 是 `Exa` 的备用 CLI，不是 MCP，不加入 `setup-mcp.sh --mcp all`。
+
+### 安装与检测
+
+```bash
+npm install -g @tiny-fish/cli
+tinyfish --version
+```
+
+如果 `tinyfish --version` 失败，说明 CLI 未安装或不在 `PATH` 中。此时不要尝试使用 TinyFish 搜索，直接提示安装命令。
+
+### API Key 固定规则
+
+- Key 文件固定为 `{state_dir}/credentials/tinyfish`
+- 环境变量固定为 `TINYFISH_API_KEY`
+- `credentials/tinyfish` 不存在或为空时，询问用户是否配置 TinyFish API Key
+- `credentials/tinyfish` 不存在或为空，但当前环境已有 `TINYFISH_API_KEY` 时，先把环境变量值写入 `credentials/tinyfish`，并跳过询问
+- 用户提供 Key 后，先写入 `credentials/tinyfish`，再永久写入 `TINYFISH_API_KEY`
+- 用户跳过时，写入 `skipped`，后续不再询问；TinyFish 备用链路不可用时直接说明
+- `credentials/tinyfish` 已存在且非空时，跳过询问；如果值不是 `skipped`，用该值写入或更新永久环境变量
+
+### 类 Unix 写入方式
+
+类 Unix 环境只检查和写入 `~/.bashrc`：
+
+```bash
+# 查看当前会话
+printf '%s\n' "${TINYFISH_API_KEY:-}"
+
+# 查看 ~/.bashrc 是否已有配置
+[ -f ~/.bashrc ] && grep -n 'TINYFISH_API_KEY' ~/.bashrc || true
+
+# 写入或更新后，让当前会话立即可用
+export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
+```
+
+如果 `~/.bashrc` 没有 `TINYFISH_API_KEY`，追加：
+
+```bash
+touch ~/.bashrc
+export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
+```
+
+如果 `~/.bashrc` 已有 `TINYFISH_API_KEY`，更新为 `credentials/tinyfish` 中的值，不重复追加多行。
+
+### Windows PowerShell 写入方式
+
+Windows 下使用用户级环境变量，不写系统级环境变量：
+
+```powershell
+# 查看用户级环境变量
+[Environment]::GetEnvironmentVariable("TINYFISH_API_KEY", "User")
+
+# 永久写入用户级环境变量
+[Environment]::SetEnvironmentVariable("TINYFISH_API_KEY", "从credentials/tinyfish读取的key", "User")
+
+# 写入当前 PowerShell 会话
+$env:TINYFISH_API_KEY = "从credentials/tinyfish读取的key"
+```
+
+如果用户级环境变量已有值，但 `credentials/tinyfish` 也已有非空非 `skipped` 值，以 `credentials/tinyfish` 为准并更新用户级环境变量。
 
 ## 宿主配置路径
 
@@ -151,6 +226,12 @@ bash scripts/setup-mcp.sh --mcp all --force
 ```
 
 脚本内部会自动调用 `detect.sh`（单次）获取 agent/os/state_dir，调用一次 `xxx mcp list` 检测已安装的 MCP，并从 `credentials/` 目录读取已存储的 API Key。
+
+`TinyFish` 不是 MCP，不通过 `setup-mcp.sh` 安装。需要单独使用：
+
+```bash
+npm install -g @tiny-fish/cli
+```
 
 ## 标准安装方式
 
@@ -650,6 +731,9 @@ mcp_servers:
 - `Codex` 把 `context7`、`mcp-deepwiki` 或 `github-fetcher` 错写成远程 URL 配置
 - 用户明确没有 key，却仍然给 `exa` 传入占位符 key
 - 用户明确有 key，却不先索取就直接写配置
-- 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具
-- 安装 MCP 后不提示用户重启，或不继续用可用工具执行搜索
+- 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具；指定备用只允许 `TinyFish` CLI
+- `credentials/tinyfish` 已有非空值时仍重复询问用户
+- 写入 `credentials/tinyfish` 后没有同步写入永久环境变量 `TINYFISH_API_KEY`
+- Windows 下写入系统级环境变量而不是用户级环境变量
+- 安装 MCP 后不提示用户重启
 - 用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
