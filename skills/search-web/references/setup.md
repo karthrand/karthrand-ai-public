@@ -7,7 +7,7 @@
 - `bash scripts/detect.sh` 输出 `initialized=false`（标志文件不存在）
 - `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
 - `Exa` 失败后需要启用 `TinyFish` 备用搜索，但 `TinyFish` CLI、`credentials/tinyfish` 或 `TINYFISH_API_KEY` 未配置
-- 需要为 `Claude Code`、`Codex`、`OpenCode`、`QwenCode` 或 `Hermes` 配置 `search-web` 的必需 MCP
+- 需要为 `Claude Code`、`Codex`、`OpenCode`、`QwenCode`、`Hermes` 或 `Pi` 配置 `search-web` 的必需 MCP
 
 ## 必需依赖与工具边界
 
@@ -53,11 +53,11 @@ initialized=true
 固定规则：
 
 1. `scripts/detect.sh` 必须是从 `skill-harness` 复制过来的物理副本，不能通过跨 skill 相对路径引用，也不能使用符号链接。
-2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`hermes`、`unknown`。
+2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`hermes`、`pi`、`unknown`。
 3. `os` 只能是 `windows`、`linux`、`macos`、`unknown`。
 4. `state_dir` 所有平台统一为 `~/.config/search-web/`。
-5. `initialized` 通过标志文件 `state_dir/{agent}` 是否存在判定。
-6. 如果 `agent` 输出为 `unknown`，停止 setup 并告知用户无法识别宿主类型，需手动配置 MCP。
+5. `initialized` 通过标志文件 `state_dir/{agent}` 是否存在判定；`agent=unknown` 时跳过标志文件检查，直接视为已初始化。
+6. 如果 `agent` 输出为 `unknown`，跳过 setup 直接走搜索流程；MCP 在实际调用时不可用则停止并告知用户需手动配置。
 
 禁止做法：
 
@@ -191,6 +191,7 @@ $env:TINYFISH_API_KEY = "从credentials/tinyfish读取的key"
 | OpenCode | `~/.config/opencode/opencode.json` |
 | QwenCode | `~/.qwen/settings.json` |
 | Hermes | `~/.hermes/config.yaml` |
+| Pi | `~/.pi/agent/mcp.json` |
 
 ## 脚本安装方式（推荐）
 
@@ -246,8 +247,7 @@ npm install -g @tiny-fish/cli
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.context7`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.context7`
 - `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `context7`
-
-#### `Claude Code`
+- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `context7`
 
 ```json
 {
@@ -359,6 +359,34 @@ mcp_servers:
     args: ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
 ```
 
+#### `Pi`
+
+手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    }
+  }
+}
+```
+
+Windows：
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
+    }
+  }
+}
+```
+
 ### 2. `exa`
 
 #### 检测方式
@@ -368,10 +396,7 @@ mcp_servers:
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.exa`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.exa`
 - `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `exa`
-
-#### `Claude Code`
-
-无 key：
+- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `exa`
 
 ```json
 {
@@ -481,6 +506,34 @@ mcp_servers:
     url: "https://mcp.exa.ai/mcp"
 ```
 
+#### `Pi`
+
+手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
+
+无 key：
+
+```json
+{
+  "mcpServers": {
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp"
+    }
+  }
+}
+```
+
+有 key：
+
+```json
+{
+  "mcpServers": {
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
+    }
+  }
+}
+```
+
 ### 3. `mcp-deepwiki`
 
 #### 检测方式
@@ -490,6 +543,7 @@ mcp_servers:
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.mcp-deepwiki`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.mcp-deepwiki`
 - `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `mcp-deepwiki`
+- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `mcp-deepwiki`
 
 #### `Claude Code`
 
@@ -594,6 +648,34 @@ mcp_servers:
     args: ["-y", "mcp-deepwiki@latest"]
 ```
 
+#### `Pi`
+
+手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
+
+```json
+{
+  "mcpServers": {
+    "mcp-deepwiki": {
+      "command": "npx",
+      "args": ["-y", "mcp-deepwiki@latest"]
+    }
+  }
+}
+```
+
+Windows：
+
+```json
+{
+  "mcpServers": {
+    "mcp-deepwiki": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "mcp-deepwiki@latest"]
+    }
+  }
+}
+```
+
 ### 4. `github-fetcher`
 
 #### 检测方式
@@ -603,6 +685,7 @@ mcp_servers:
 - `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.github-fetcher`
 - `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.github-fetcher`
 - `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `github-fetcher`
+- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `github-fetcher`
 
 #### `Claude Code`
 
@@ -707,6 +790,34 @@ mcp_servers:
     args: ["-y", "github-fetcher-mcp"]
 ```
 
+#### `Pi`
+
+手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
+
+```json
+{
+  "mcpServers": {
+    "github-fetcher": {
+      "command": "npx",
+      "args": ["-y", "github-fetcher-mcp"]
+    }
+  }
+}
+```
+
+Windows：
+
+```json
+{
+  "mcpServers": {
+    "github-fetcher": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "github-fetcher-mcp"]
+    }
+  }
+}
+```
+
 ## 成功标准
 
 - 缺失的 MCP 已通过 `setup-mcp.sh` 安装（注册到配置文件）
@@ -716,7 +827,7 @@ mcp_servers:
 
 ## 重启说明
 
-`claude mcp add` / `codex mcp add` / `hermes mcp add` 等命令将 MCP 注册到配置文件，但不会在当前会话中加载。这是所有 code agent 的共同行为：
+`claude mcp add` / `codex mcp add` / `hermes mcp add` / `pi`（手动编辑 mcp.json）等命令将 MCP 注册到配置文件，但不会在当前会话中加载。这是所有 code agent 的共同行为：
 - 安装完成后，MCP 配置已写入，但当前会话仍无法使用
 - 用户重启 code agent 后，新 MCP 才会被加载
 - 安装完成后应告知用户重启，不在当前会话中尝试使用未加载的 MCP

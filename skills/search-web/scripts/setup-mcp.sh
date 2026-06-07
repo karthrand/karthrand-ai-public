@@ -35,7 +35,7 @@ usage() {
 search-web 技能 MCP 自动安装脚本
 
 选项:
-  --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code|hermes)
+  --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code|hermes|pi)
                     不传则自动调用 detect.sh 检测
   --os <类型>        目标运行时 OS (windows|linux|macos)
                     不传则自动调用 detect.sh 检测
@@ -139,6 +139,7 @@ check_mcp_list() {
     opencode)    opencode mcp list 2>/dev/null || echo "" ;;
     qwen-code)   qwen mcp list 2>/dev/null || echo "" ;;
     hermes)      hermes mcp list 2>/dev/null || echo "" ;;
+    pi)          pi mcp list 2>/dev/null || echo "" ;;
     *)           echo "" ;;
   esac
 }
@@ -162,6 +163,10 @@ is_mcp_installed() {
       ;;
     hermes)
       printf '%s' "$MCP_LIST_OUTPUT" | grep -q "$mcp"
+      ;;
+    pi)
+      # pi mcp list 输出 Markdown："### context7（2 工具）"
+      printf '%s' "$MCP_LIST_OUTPUT" | grep -q "### $mcp"
       ;;
     *)
       return 1
@@ -271,6 +276,25 @@ install_stdio_mcp() {
         hermes mcp add "$mcp" --command "npx" --args "-y $npm_pkg"
       fi
       ;;
+    pi)
+      # Pi 无 mcp add CLI，手动编辑 mcp.json
+      echo "Pi 无 mcp add CLI 命令，需要手动编辑 mcp.json："
+      echo ""
+      if is_windows; then
+        echo "  \"$mcp\": {"
+        echo "    \"command\": \"cmd\","
+        echo "    \"args\": [\"/c\", \"npx\", \"-y\", \"$npm_pkg\"]"
+        echo "  }"
+      else
+        echo "  \"$mcp\": {"
+        echo "    \"command\": \"npx\","
+        echo "    \"args\": [\"-y\", \"$npm_pkg\"]"
+        echo "  }"
+      fi
+      echo ""
+      echo "配置文件位置: ~/.pi/agent/mcp.json"
+      echo "请在 mcpServers 对象内添加上述配置，然后重新运行本脚本进行状态标记更新。"
+      ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2
       exit 1
@@ -323,6 +347,16 @@ install_remote_mcp() {
       ;;
     hermes)
       hermes mcp add exa --url "$exa_url"
+      ;;
+    pi)
+      echo "Pi 无 mcp add CLI 命令，需要手动编辑 mcp.json："
+      echo ""
+      echo "  \"exa\": {"
+      echo "    \"url\": \"$exa_url\""
+      echo "  }"
+      echo ""
+      echo "配置文件位置: ~/.pi/agent/mcp.json"
+      echo "请在 mcpServers 对象内添加上述配置，然后重新运行本脚本进行状态标记更新。"
       ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2
@@ -384,8 +418,13 @@ if [ "$MCP_NAME" = "all" ]; then
     done
   fi
 
-  create_init_flag
-  echo "批量安装完成。请重启 code agent 后验证 MCP 是否可用。"
+  # Pi 无 mcp add CLI，仅打印手动编辑指令，不创建标志文件
+  if [ "$AGENT" != "pi" ]; then
+    create_init_flag
+    echo "批量安装完成。请重启 code agent 后验证 MCP 是否可用。"
+  else
+    echo "批量提示完成。请手动编辑 ~/.pi/agent/mcp.json 后重新运行本脚本进行状态标记更新。"
+  fi
 else
   # 单项安装
   if [ "$FORCE" -eq 0 ]; then
@@ -397,6 +436,9 @@ else
   fi
 
   run_install "$MCP_NAME"
-  create_init_flag
+  # Pi 无 mcp add CLI，仅打印手动编辑指令，不创建标志文件
+  if [ "$AGENT" != "pi" ]; then
+    create_init_flag
+  fi
   echo "请重启 code agent 后验证 MCP 是否可用。"
 fi

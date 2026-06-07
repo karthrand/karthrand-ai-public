@@ -19,13 +19,16 @@
 |----------|------|----------|
 | **tinyfish** | Exa 失败后的备用网页搜索与正文抓取 | `npm install -g @tiny-fish/cli` |
 
-### 支持的 Code Agent
+### 已适配自动安装的 Code Agent
 
 - Claude Code
 - Codex
 - OpenCode
 - QwenCode
 - Hermes
+- Pi
+
+未列出的 code agent 也可使用本 skill，前提是 MCP 已手动配置完成。`detect.sh` 在无法识别宿主类型时跳过 setup，直接走搜索流程。
 
 ### 验证安装
 

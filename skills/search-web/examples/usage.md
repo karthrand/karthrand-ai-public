@@ -57,7 +57,7 @@ graph TD
 
 ```text
 1. 运行 bash scripts/detect.sh（无参数），解析输出
-2. 如果 agent=unknown，立即停止 setup 并说明无法识别当前宿主
+2. 如果 agent=unknown，跳过 setup 直接进入步骤 3；MCP 在实际调用时不可用则停止并告知用户
 3. 检查 credentials/ 目录下 context7、exa 和 tinyfish 文件
 4. 如果 credentials/context7 文件不存在或为空，询问是否配置 Context7 Key
 5. 如果 credentials/exa 文件不存在或为空，询问是否配置 Exa Key
@@ -356,11 +356,11 @@ parameters:
 TinyFish 不是 MCP，缺失时提示 `npm install -g @tiny-fish/cli`，并按 `credentials/tinyfish` 写入 `TINYFISH_API_KEY`
 ```
 
-### 示例 5：宿主信号冲突时停止
+### 示例 5：宿主类型未识别时跳过检测
 
 ```text
 当前状态：`bash scripts/detect.sh` 输出 `agent=unknown`
-处理方式：直接返回 unknown，不继续猜配置路径，也不开始 setup
+处理方式：跳过 setup，直接尝试后续搜索流程；MCP 在实际调用时不可用则停止并告知用户需手动配置
 ```
 
 ## 常见问题处理

@@ -59,8 +59,8 @@ detect_by_env() {
   local signals=""
   local agent=""
   local confidence=0
-  local found_claude=0 found_codex=0 found_opencode=0 found_qwen=0 found_hermes=0
-  local opencode_confidence=0 codex_confidence=0 qwen_confidence=0 hermes_confidence=0
+  local found_claude=0 found_codex=0 found_opencode=0 found_qwen=0 found_hermes=0 found_pi=0
+  local opencode_confidence=0 codex_confidence=0 qwen_confidence=0 hermes_confidence=0 pi_confidence=0
 
   if [ -n "${CLAUDECODE:-}" ]; then
     signals=$(append_signal "$signals" "CLAUDECODE=$CLAUDECODE")
@@ -104,15 +104,23 @@ detect_by_env() {
     [ "$hermes_confidence" -eq 0 ] && hermes_confidence=90
   fi
 
+  if [ -n "${PI_CODING_AGENT:-}" ]; then
+    signals=$(append_signal "$signals" "PI_CODING_AGENT=$PI_CODING_AGENT")
+    found_pi=1
+    [ "$pi_confidence" -eq 0 ] && pi_confidence=90
+  fi
+
   if [ "$found_claude" -eq 0 ]; then
-    if [ "$found_codex" -eq 1 ] && [ "$found_opencode" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_hermes" -eq 0 ]; then
+    if [ "$found_codex" -eq 1 ] && [ "$found_opencode" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_hermes" -eq 0 ] && [ "$found_pi" -eq 0 ]; then
       agent="codex"; confidence=$codex_confidence
-    elif [ "$found_opencode" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_hermes" -eq 0 ]; then
+    elif [ "$found_opencode" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_hermes" -eq 0 ] && [ "$found_pi" -eq 0 ]; then
       agent="opencode"; confidence=$opencode_confidence
-    elif [ "$found_qwen" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_opencode" -eq 0 ] && [ "$found_hermes" -eq 0 ]; then
+    elif [ "$found_qwen" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_opencode" -eq 0 ] && [ "$found_hermes" -eq 0 ] && [ "$found_pi" -eq 0 ]; then
       agent="qwen-code"; confidence=$qwen_confidence
-    elif [ "$found_hermes" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_opencode" -eq 0 ] && [ "$found_qwen" -eq 0 ]; then
+    elif [ "$found_hermes" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_opencode" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_pi" -eq 0 ]; then
       agent="hermes"; confidence=$hermes_confidence
+    elif [ "$found_pi" -eq 1 ] && [ "$found_codex" -eq 0 ] && [ "$found_opencode" -eq 0 ] && [ "$found_qwen" -eq 0 ] && [ "$found_hermes" -eq 0 ]; then
+      agent="pi"; confidence=$pi_confidence
     fi
   fi
 
@@ -155,11 +163,16 @@ state_path="$(get_state_dir "$DEFAULT_SKILL_NAME")"
 
 # 初始化检查：状态目录下是否存在当前 agent 类型的标志文件
 # 例如 ~/.config/skill-harness/claude-code
-init_flag="${state_path}${agent}"
-if [ -f "$init_flag" ]; then
+# agent=unknown 时跳过标志文件检查，直接视为已初始化
+if [ "$agent" = "unknown" ]; then
   initialized="true"
 else
-  initialized="false"
+  init_flag="${state_path}${agent}"
+  if [ -f "$init_flag" ]; then
+    initialized="true"
+  else
+    initialized="false"
+  fi
 fi
 
 printf 'agent=%s\nos=%s\nstate_dir=%s\ninitialized=%s\n' "$agent" "$os_type" "$state_path" "$initialized"
