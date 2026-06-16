@@ -1,6 +1,6 @@
 # Search-Web
 
-集成多源搜索的技术查询技能，整合 Context7 文档查询、Exa 网络搜索、TinyFish 备用搜索、DeepWiki 仓库文档和 github-fetcher 仓库文件读取。
+集成多源搜索的技术查询技能，整合 Context7 文档查询、Exa 网络搜索、TinyFish 备用搜索、mcp-deepwiki（DeepWiki）仓库文档和 github-fetcher 仓库文件读取。
 
 ## 前置条件
 
@@ -17,9 +17,9 @@
 
 | CLI 工具 | 用途 | 安装方式 |
 |----------|------|----------|
-| **tinyfish** | Exa 失败后的备用网页搜索与正文抓取 | `npm install -g @tiny-fish/cli` |
+| **tinyfish** | Exa 失败后的备用网页搜索与正文抓取 | `npm install -g @tiny-fish/cli@latest` |
 
-### 已适配自动安装的 Code Agent
+### 已适配 setup 的 Code Agent
 
 - Claude Code
 - Codex
@@ -28,93 +28,41 @@
 - Hermes
 - Pi
 
-未列出的 code agent 也可使用本 skill，前提是 MCP 已手动配置完成。`detect.sh` 在无法识别宿主类型时跳过 setup，直接走搜索流程。
+未列出的 code agent 也可使用本 skill。普通搜索不做环境初始化；需要配置时运行 `$search-web setup` 获取通用 MCP JSON。
 
 ### 验证安装
 
 - 直接询问 code agent 有哪些 skills
-- 或运行 `bash scripts/detect.sh` 确认宿主识别正常
+- 运行 `$search-web setup` 后重启 code agent，再确认 MCP 是否可用
 
 ## 整体流程
 
-```mermaid
-flowchart TD
-    Start([用户查询]) --> CheckState{运行 detect.sh 检查初始化状态}
-    CheckState -->|缺失/不一致| CheckCreds{检查 credentials}
-    CheckState -->|正常| ConfigCheck{配置项类问题?}
+普通搜索：
 
-    CheckCreds -->|context7 hasApiKey=false| AskC7[询问是否配置 Context7 API Key]
-    CheckCreds -->|exa hasApiKey=false| AskExa[询问是否配置 Exa API Key]
-    CheckCreds -->|tinyfish 缺失且 TINYFISH_API_KEY 已存在| SaveTinyEnv[写回 credentials/tinyfish<br/>并确保永久环境变量]
-    CheckCreds -->|tinyfish hasApiKey=false| AskTiny[询问是否配置 TinyFish API Key]
-    CheckCreds -->|Key 齐全或已跳过| Setup[进入 setup 流程]
-    AskC7 -->|用户提供| SaveC7Key[写入 credentials/context7]
-    AskC7 -->|用户跳过| AskExa
-    AskExa -->|用户提供| SaveExaKey[写入 credentials/exa]
-    AskExa -->|用户跳过| AskTiny
-    AskTiny -->|用户提供| SaveTinyKey[写入 credentials/tinyfish<br/>并设置 TINYFISH_API_KEY]
-    AskTiny -->|用户跳过| Setup
-    SaveC7Key --> CheckCreds
-    SaveExaKey --> CheckCreds
-    SaveTinyKey --> CheckCreds
-    SaveTinyEnv --> CheckCreds
+1. 根据用户目标选择 `Context7`、`Exa`、`mcp-deepwiki`、`github-fetcher` 或网页正文读取。
+2. `Exa` 失败、额度到限、服务不可用或空结果时，使用 `TinyFish` CLI 备用。
+3. MCP 未注册或不可用时，停止并提示运行 `$search-web setup` 后重启。
 
-    Setup --> Detect[1. detect.sh（无参数）]
-    Detect --> CheckMCP[2. 逐项检测 4 个 MCP]
-    CheckMCP -->|缺失| InstallMCP[3. setup-mcp.sh 安装<br/>自动从 credentials 读取 Key]
-    CheckMCP -->|全部可用| WriteState[4. 创建 init_flag 标志文件]
-    InstallMCP --> WriteState
-    WriteState --> ConfigCheck
+手动 setup：
 
-    ConfigCheck -->|是| ConfigStrategy[config-index-shortcut]
-    ConfigCheck -->|否| C7Check{技术文档?}
-    ConfigStrategy --> C7Check
-
-    C7Check -->|是| C7[Context7: resolve --> query]
-    C7Check -->|否| Exa[Exa 网络搜索]
-    C7 --> Exa
-    Exa --> ExaOK{Exa 成功?}
-    ExaOK -->|否| TinyFish[TinyFish 备用搜索]
-    ExaOK -->|是| ResultType{命中类型}
-    TinyFish --> ResultType
-    ResultType -->|网页| WebRead[正文读取]
-    ResultType -->|GitHub 文档| DeepWiki[mcp-deepwiki]
-    ResultType -->|GitHub 文件| GHFetcher[github-fetcher]
-    ResultType -->|普通| Collect[整理结果]
-
-    WebRead --> Format[output-format 格式化]
-    DeepWiki --> Format
-    GHFetcher --> Format
-    Collect --> Format
-    Format --> Output([输出回答])
-
-    style Start fill:#e1f5fe
-    style Output fill:#e8f5e9
-    style Setup fill:#fff3e0
-    style InstallMCP fill:#ffebee
-    style AskC7 fill:#fce4ec
-    style AskExa fill:#fce4ec
-    style AskTiny fill:#fce4ec
-```
+1. 检测 code agent 与 OS。
+2. 确保 `tinyfish` CLI 可用（全局装 `@tiny-fish/cli@latest`）。
+3. 检测并安装缺失 MCP（exa 必需 Key）。
+4. 设置永久 `TINYFISH_API_KEY`。
+5. 提示重启 code agent。
 
 ## 手动初始化
 
-首次使用前，需确保 4 个必需 MCP 已安装：
-
 ```bash
-# 1. 检测环境（agent、os、state_dir、initialized 四项一次输出）
-bash scripts/detect.sh
+# 执行完整 setup（exa key 必需）
+$search-web setup
 
-# 2. 使用脚本安装 MCP（推荐）
+# 脚本等价入口
+bash scripts/setup-mcp.sh --api-key "EXA_API_KEY=你的ExaKey"
+
+# 单项调试
+bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=你的ExaKey"
 bash scripts/setup-mcp.sh --mcp context7
-bash scripts/setup-mcp.sh --mcp exa
-bash scripts/setup-mcp.sh --mcp mcp-deepwiki
-bash scripts/setup-mcp.sh --mcp github-fetcher
-
-# 3. 安装 TinyFish 备用 CLI（可选但推荐）
-npm install -g @tiny-fish/cli
-
-# 或手动按宿主类型配置（见 references/setup.md）
 ```
 
 完整初始化指南见 `references/setup.md`。

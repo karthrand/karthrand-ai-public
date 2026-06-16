@@ -1,13 +1,23 @@
 # TinyFish 备用搜索
 
+## 目录
+
+- 何时读取
+- 固定边界
+- 安装与检查
+- API Key 管理
+- 搜索命令
+- 正文抓取命令
+- 降级输出要求
+
 ## 何时读取
 
 出现以下任一情况时读取本文件：
 
 - `Exa` 搜索失败、额度到限、服务不可用或返回空结果
 - 需要安装或验证 `TinyFish` CLI
-- 需要设置 `credentials/tinyfish` 和 `TINYFISH_API_KEY`
-- 已有 URL 的正文读取失败，需要用 `TinyFish` 抓取正文
+- 需要设置或验证 `TINYFISH_API_KEY`
+- 已有 URL 的网页正文读取失败，需要用 `TinyFish` 抓取正文
 
 ## 固定边界
 
@@ -19,19 +29,13 @@
 ## 安装与检查
 
 ```bash
-npm install -g @tiny-fish/cli
+npm install -g @tiny-fish/cli@latest
 tinyfish --version
 ```
 
 如果 `tinyfish --version` 失败，说明 CLI 未安装或不在 `PATH` 中。此时不要继续执行 `tinyfish search query`，直接提示安装命令。
 
 ## API Key 管理
-
-Key 文件固定为：
-
-```text
-~/.config/search-web/credentials/tinyfish
-```
 
 环境变量固定为：
 
@@ -41,29 +45,27 @@ TINYFISH_API_KEY
 
 固定流程：
 
-1. 先读取 `credentials/tinyfish`。
-2. 文件不存在或为空，但当前环境已有 `TINYFISH_API_KEY` 时，先写回 `credentials/tinyfish`，并跳过询问。
-3. 文件不存在或为空，且当前环境没有 `TINYFISH_API_KEY` 时，询问用户是否配置 TinyFish API Key。
-4. 用户提供 Key 时，写入 `credentials/tinyfish`。
-5. 用户跳过时，写入 `skipped`，后续不再询问。
-6. 文件存在且非空时，跳过询问。
-7. 文件内容不是 `skipped` 时，将该值永久写入 `TINYFISH_API_KEY`，并注入当前会话。
+1. 先检查当前会话或用户级环境变量中是否已有 `TINYFISH_API_KEY`。
+2. 如果不存在，询问用户提供 TinyFish API Key。
+3. 用户未提供 Key 时停止使用 TinyFish，直接说明不可用原因。
+4. 用户提供 Key 后，永久写入 `TINYFISH_API_KEY`，并注入当前会话。
+5. 不写入本地密钥文件。
 
 ### 类 Unix
 
-只检查和写入 `~/.bashrc`：
+默认检查和写入 `~/.bashrc`；macOS 默认 zsh，当 `$SHELL` 含 zsh 或 `~/.zshrc` 已存在时，需同步写入 `~/.zshrc`（`setup-mcp.sh` 已自动处理）：
 
 ```bash
 printf '%s\n' "${TINYFISH_API_KEY:-}"
 [ -f ~/.bashrc ] && grep -n 'TINYFISH_API_KEY' ~/.bashrc || true
-export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
+export TINYFISH_API_KEY="你的TinyFishKey"
 ```
 
 如果 `~/.bashrc` 没有 `TINYFISH_API_KEY`，追加：
 
 ```bash
 touch ~/.bashrc
-export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
+export TINYFISH_API_KEY="你的TinyFishKey"
 ```
 
 如果 `~/.bashrc` 已有 `TINYFISH_API_KEY`，更新该行，不重复追加。
@@ -74,8 +76,8 @@ export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
 
 ```powershell
 [Environment]::GetEnvironmentVariable("TINYFISH_API_KEY", "User")
-[Environment]::SetEnvironmentVariable("TINYFISH_API_KEY", "从credentials/tinyfish读取的key", "User")
-$env:TINYFISH_API_KEY = "从credentials/tinyfish读取的key"
+[Environment]::SetEnvironmentVariable("TINYFISH_API_KEY", "你的TinyFishKey", "User")
+$env:TINYFISH_API_KEY = "你的TinyFishKey"
 ```
 
 禁止写入系统级环境变量。
@@ -142,4 +144,4 @@ tinyfish fetch content get "https://example.com/a" "https://example.com/b" --for
 - 明确说明 `Exa` 的失败原因
 - 明确说明已切换到 `TinyFish`
 - 来源标注使用 `TinyFish`
-- 如果 `credentials/tinyfish` 为 `skipped`、`TINYFISH_API_KEY` 不可用或 CLI 未安装，直接说明 TinyFish 不可用，不编造搜索结果
+- 如果 `TINYFISH_API_KEY` 不可用或 CLI 未安装，直接说明 TinyFish 不可用，不编造搜索结果

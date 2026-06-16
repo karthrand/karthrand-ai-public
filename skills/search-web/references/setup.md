@@ -1,253 +1,95 @@
-# Search-Web 初始化
+# Search-Web Setup 参考
+
+## 目录
+
+- 何时读取
+- 固定决策
+- 状态管理
+- 密钥与依赖规则
+- 脚本安装方式（推荐）
+- 通用 MCP JSON
+- Pi 专项：extension + mcp.json
+- 手动配置参考（自动安装失败时）
+- 成功标准
+- 常见错误
 
 ## 何时读取
 
-出现以下任一情况时读取本文件：
+只有出现以下任一情况时读取本文件：
 
-- `bash scripts/detect.sh` 输出 `initialized=false`（标志文件不存在）
-- `Context7`、`Exa`、`DeepWiki`、`github-fetcher` 任一报未注册、连接失败、`server unavailable` 或类似环境类错误
-- `Exa` 失败后需要启用 `TinyFish` 备用搜索，但 `TinyFish` CLI、`credentials/tinyfish` 或 `TINYFISH_API_KEY` 未配置
-- 需要为 `Claude Code`、`Codex`、`OpenCode`、`QwenCode`、`Hermes` 或 `Pi` 配置 `search-web` 的必需 MCP
-
-## 必需依赖与工具边界
-
-本 skill 的必需 MCP 固定为：
-
-- `context7`
-- `exa`
-- `mcp-deepwiki`
-- `github-fetcher`
-
-可选 CLI 备用依赖：
-
-- `tinyfish`（通过 `npm install -g @tiny-fish/cli` 安装）
-
-安装完成后创建标志文件并告知用户重启。新安装的 MCP 在重启后生效，当前会话无法使用。
-
-指定偏好与边界：
-
-- 联网搜索优先使用 `Exa`，仅在 `Exa` 搜索失败、额度到限、服务不可用或空结果时使用 `TinyFish` CLI
-- `Context7` 只负责技术文档
-- `mcp-deepwiki` 只负责 GitHub 仓库文档
-- `github-fetcher` 只负责 GitHub 仓库文件和目录读取
-- 网页正文读取不属于必需 MCP；只有用户已给出明确 URL，或 `Exa` / `TinyFish` 已经定位到目标网页后，才允许使用宿主已提供的正文读取工具
-- 不得把其他搜索型 MCP 当成 `Exa` 的替代品；指定备用只允许 `TinyFish` CLI
-- 不得用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，反之亦然
-
-## 宿主识别方式
-
-多宿主 setup 必须先识别当前宿主，调用本 skill 自己的脚本副本：
-
-```bash
-bash scripts/detect.sh
-```
-
-单次调用，无参数，输出四行：
-```
-agent=claude-code
-os=windows
-state_dir=C:/Users/Administrator/.config/search-web/
-initialized=true
-```
-
-固定规则：
-
-1. `scripts/detect.sh` 必须是从 `skill-harness` 复制过来的物理副本，不能通过跨 skill 相对路径引用，也不能使用符号链接。
-2. `agent` 只能是 `claude-code`、`codex`、`opencode`、`qwen-code`、`hermes`、`pi`、`unknown`。
-3. `os` 只能是 `windows`、`linux`、`macos`、`unknown`。
-4. `state_dir` 所有平台统一为 `~/.config/search-web/`。
-5. `initialized` 通过标志文件 `state_dir/{agent}` 是否存在判定；`agent=unknown` 时跳过标志文件检查，直接视为已初始化。
-6. 如果 `agent` 输出为 `unknown`，跳过 setup 直接走搜索流程；MCP 在实际调用时不可用则停止并告知用户需手动配置。
-
-禁止做法：
-
-- 自行编写内联宿主检测逻辑
-- 通过 `system prompt`、工具指纹、父进程名或本机命令存在性猜当前宿主
-- 用跨 skill 路径调用别的检测脚本
+- 用户调用 `$search-web setup`
+- 用户明确要求配置、修复或重新安装 `search-web` 的搜索依赖
+- 普通搜索中 MCP 报未注册、未加载、连接失败或 `server unavailable`，需要向用户解释 setup 流程
 
 ## 固定决策
 
-1. 运行 `bash scripts/detect.sh`（无参数），获取 agent、os、state_dir、initialized 四项信息。
-2. 检查 `credentials/` 目录下 `context7`、`exa` 和 `tinyfish` 文件：
-   - 文件不存在或为空：询问用户"是否配置 API Key？"
-     - 用户选择配置 → 写入 Key 值到对应文件
-     - 用户选择跳过 → 写入 "skipped" 到对应文件，后续不再询问
-   - 文件内容为 "skipped"：用户曾明确跳过，不再询问
-   - 文件内容为其他值：已配置，安装 MCP 时自动读取注入
-   - `exa` 的 API Key 为可选；不提供 Key 时使用无 Key URL（`https://mcp.exa.ai/mcp`），安装后仍可正常使用
-   - `tinyfish` 的 API Key 必须同步到永久环境变量 `TINYFISH_API_KEY`；如果 `credentials/tinyfish` 已存在且非空，跳过询问，直接确保环境变量已写入；如果 `credentials/tinyfish` 缺失但当前环境已有 `TINYFISH_API_KEY`，先写回 `credentials/tinyfish` 并跳过询问
-3. 调用一次 `xxx mcp list`（如 `claude mcp list`），将输出存为变量，逐项 grep 检查 `context7`、`exa`、`mcp-deepwiki`、`github-fetcher` 是否已安装。
-   - 已安装的跳过，未安装的执行 `setup-mcp.sh` 安装。
-   - `mcp list` 只调用一次，后续全部 grep 变量判断，严禁每个 MCP 单独调用。
-4. 仅在需要启用 `TinyFish` 备用搜索，或用户已配置 `credentials/tinyfish` 时检查 `tinyfish` CLI：
-   - 未安装：提示运行 `npm install -g @tiny-fish/cli`
-   - 已安装：继续使用 `credentials/tinyfish` 和 `TINYFISH_API_KEY` 管理备用搜索能力
-5. 所有缺失 MCP 安装完成后，创建标志文件 `{state_dir}/{agent}`，使 `initialized=true`。
-6. 四项 MCP 都可用时，返回主流程，不重复 setup。
-7. `exa` 需要 key 时，优先从 `credentials/exa` 文件读取已存储的 Key；如未存储，再询问。
+1. `setup` 第一步运行 `bash scripts/detect.sh`，获取 `agent`、`os`、`state_dir`。
+2. 检查 npm 是否可用；不可用则停止并提示安装 Node.js/npm。
+3. 确保 `tinyfish` CLI 可用（`npm install -g @tiny-fish/cli@latest`）。其余 3 个 MCP server 由 `npx -y` 按需拉取，不全局安装。
+4. 对支持的 code agent 检测四项 MCP 是否已安装：
+   - claude-code/codex/qwen-code/hermes：调用一次 `xxx mcp list`，grep 判断。
+   - opencode：优先调用 `opencode mcp list`，不可用时读 `~/.config/opencode/opencode.json` 判断。
+   - pi：原生无 MCP list 子命令，优先读项目 `.pi/mcp.json`，不存在时读 `~/.pi/agent/mcp.json` 判断。
+5. 对缺失的 MCP 执行安装；`exa` 必需 Exa API Key，安装前询问并直接写入 MCP URL。
+6. 检查 `TINYFISH_API_KEY`；不存在则询问并永久写入。
+7. 未知 code agent：不自动写配置，输出含 Exa Key 的通用 MCP JSON 示例。
+8. `opencode` 和 `pi` 属于手动配置型 agent：只输出配置片段，用户编辑后重启即可。
+9. `pi` 走完整流程：先 `pi install npm:pi-mcp-extension`，再按 pi-mcp-extension 格式编辑 `~/.pi/agent/mcp.json` 或 `.pi/mcp.json`。
+10. setup 完成后提示用户重启 code agent。
 
 ## 状态管理
 
-使用目录结构 + 平面文件，零解析依赖。位置：`~/.config/search-web/`（全平台统一）。
+状态目录由 `detect.sh` 输出的 `state_dir` 决定，默认位于 `~/.config/search-web/`，仅供诊断与脚本内部定位使用。
 
-```
-~/.config/search-web/
-  claude-code                        # initialized 标志文件（detect.sh 管理）
-  codex                              # 其他 agent 的标志文件
-  credentials/
-    context7                         # API Key 值、"skipped"、或空
-    exa                              # API Key 值、"skipped"、或空
-    tinyfish                         # API Key 值、"skipped"、或空；非 skipped 时同步到 TINYFISH_API_KEY
-```
+- 普通搜索不依赖 `detect.sh`，也不存在初始化标志文件。
+- 不读写本地密钥文件；Exa Key 只写入 MCP URL，TinyFish Key 只写入永久环境变量。
 
-### 标志文件规则
+## 密钥与依赖规则
 
-- 标志文件名即 agent 类型（如 `claude-code`、`codex`），存在即表示该 agent 已完成 setup
-- `detect.sh` 通过检查 `{state_dir}/{agent}` 文件是否存在来判定 `initialized`
-- 安装完成后由 `setup-mcp.sh` 创建，不手动管理
-- 删除标志文件即触发下次使用时重新 setup
+### Context7
 
-### credentials 固定规则
+固定使用 `@upstash/context7-mcp@latest`，不使用 API Key，不询问 Context7 Key。
 
-- 文件不存在或为空：未配置，进入 setup 前需询问
-- 文件内容为 "skipped"：用户曾明确跳过，不再询问
-- 文件内容为其他值：已配置，安装 MCP 时自动读取注入
-- Key 存储在 `credentials/` 目录下的独立文件中，跨 agent 共享
-- 多 code agent 共享同一 `credentials/`，只需询问一次 Key
-- `credentials/tinyfish` 文件内容为其他值时，后续 setup 不再询问用户，但必须确保该值已永久写入 `TINYFISH_API_KEY`
+### Exa
 
-## TinyFish CLI 备用搜索
+是 remote MCP。**Exa API Key 必需**：检测到 exa 缺失并安装时必须询问并获取 Key，为空则中止；Key 直接写入 MCP URL（`https://mcp.exa.ai/mcp?exaApiKey=...`），不保存到本地文件。非交互调用（stdin 非 TTY，例如被其他工具通过管道调用）必须通过 `--api-key "EXA_API_KEY=..."` 传入，否则脚本直接报错退出。
 
-`TinyFish` 是 `Exa` 的备用 CLI，不是 MCP，不加入 `setup-mcp.sh --mcp all`。
+### TinyFish
 
-### 安装与检测
+通过 `npm install -g @tiny-fish/cli@latest` 安装。`TINYFISH_API_KEY` 不写入文件；Windows 写用户级环境变量，类 Unix 写 `~/.bashrc`，macOS zsh 同步写 `~/.zshrc`（`$SHELL` 含 zsh 或 `~/.zshrc` 已存在时）。该写入需永久生效，非交互（非 TTY）环境下请在终端手动执行。
 
-```bash
-npm install -g @tiny-fish/cli
-tinyfish --version
-```
-
-如果 `tinyfish --version` 失败，说明 CLI 未安装或不在 `PATH` 中。此时不要尝试使用 TinyFish 搜索，直接提示安装命令。
-
-### API Key 固定规则
-
-- Key 文件固定为 `{state_dir}/credentials/tinyfish`
-- 环境变量固定为 `TINYFISH_API_KEY`
-- `credentials/tinyfish` 不存在或为空时，询问用户是否配置 TinyFish API Key
-- `credentials/tinyfish` 不存在或为空，但当前环境已有 `TINYFISH_API_KEY` 时，先把环境变量值写入 `credentials/tinyfish`，并跳过询问
-- 用户提供 Key 后，先写入 `credentials/tinyfish`，再永久写入 `TINYFISH_API_KEY`
-- 用户跳过时，写入 `skipped`，后续不再询问；TinyFish 备用链路不可用时直接说明
-- `credentials/tinyfish` 已存在且非空时，跳过询问；如果值不是 `skipped`，用该值写入或更新永久环境变量
-
-### 类 Unix 写入方式
-
-类 Unix 环境只检查和写入 `~/.bashrc`：
-
-```bash
-# 查看当前会话
-printf '%s\n' "${TINYFISH_API_KEY:-}"
-
-# 查看 ~/.bashrc 是否已有配置
-[ -f ~/.bashrc ] && grep -n 'TINYFISH_API_KEY' ~/.bashrc || true
-
-# 写入或更新后，让当前会话立即可用
-export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
-```
-
-如果 `~/.bashrc` 没有 `TINYFISH_API_KEY`，追加：
-
-```bash
-touch ~/.bashrc
-export TINYFISH_API_KEY="从credentials/tinyfish读取的key"
-```
-
-如果 `~/.bashrc` 已有 `TINYFISH_API_KEY`，更新为 `credentials/tinyfish` 中的值，不重复追加多行。
-
-### Windows PowerShell 写入方式
-
-Windows 下使用用户级环境变量，不写系统级环境变量：
+Windows PowerShell：
 
 ```powershell
-# 查看用户级环境变量
-[Environment]::GetEnvironmentVariable("TINYFISH_API_KEY", "User")
-
-# 永久写入用户级环境变量
-[Environment]::SetEnvironmentVariable("TINYFISH_API_KEY", "从credentials/tinyfish读取的key", "User")
-
-# 写入当前 PowerShell 会话
-$env:TINYFISH_API_KEY = "从credentials/tinyfish读取的key"
+[Environment]::SetEnvironmentVariable("TINYFISH_API_KEY", "你的TinyFishKey", "User")
+$env:TINYFISH_API_KEY = "你的TinyFishKey"
 ```
 
-如果用户级环境变量已有值，但 `credentials/tinyfish` 也已有非空非 `skipped` 值，以 `credentials/tinyfish` 为准并更新用户级环境变量。
+类 Unix：
 
-## 宿主配置路径
-
-不同 code agent 的 MCP 配置路径固定如下：
-
-| Agent | 配置文件路径 |
-|-------|-------------|
-| Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/config.toml` |
-| OpenCode | `~/.config/opencode/opencode.json` |
-| QwenCode | `~/.qwen/settings.json` |
-| Hermes | `~/.hermes/config.yaml` |
-| Pi | `~/.pi/agent/mcp.json` |
+```bash
+echo 'export TINYFISH_API_KEY="你的TinyFishKey"' >> ~/.bashrc
+export TINYFISH_API_KEY="你的TinyFishKey"
+```
 
 ## 脚本安装方式（推荐）
 
-本技能提供 `scripts/setup-mcp.sh` 自动安装脚本，支持根据宿主类型和 OS 类型自动选择安装命令：
-
 ```bash
-# 安装 context7
+# 完整 setup，默认安装全部 MCP
+bash scripts/setup-mcp.sh --api-key "EXA_API_KEY=你的ExaKey"
+
+# 单项调试
+bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=你的ExaKey"
 bash scripts/setup-mcp.sh --mcp context7
-
-# 安装 exa（无 API Key）
-bash scripts/setup-mcp.sh --mcp exa
-
-# 安装 exa（有 API Key）
-bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=你的key"
-
-# 安装 context7（有 API Key）
-bash scripts/setup-mcp.sh --mcp context7 --api-key "CONTEXT7_API_KEY=你的key"
-
-# 安装 mcp-deepwiki
 bash scripts/setup-mcp.sh --mcp mcp-deepwiki
-
-# 安装 github-fetcher
 bash scripts/setup-mcp.sh --mcp github-fetcher
-
-# 强制重新安装
-bash scripts/setup-mcp.sh --mcp context7 --force
-
-# 批量安装全部四项（跳过已安装的）
-bash scripts/setup-mcp.sh --mcp all
-
-# 批量强制重装
-bash scripts/setup-mcp.sh --mcp all --force
 ```
 
-脚本内部会自动调用 `detect.sh`（单次）获取 agent/os/state_dir，调用一次 `xxx mcp list` 检测已安装的 MCP，并从 `credentials/` 目录读取已存储的 API Key。
+脚本内部会自动调用 `detect.sh` 获取 agent/os/state_dir，调用一次 MCP list 检测已安装项，并按需写入 MCP 配置。MCP 注册后不会自动进入当前会话，必须重启 code agent。
 
-`TinyFish` 不是 MCP，不通过 `setup-mcp.sh` 安装。需要单独使用：
+## 通用 MCP JSON
 
-```bash
-npm install -g @tiny-fish/cli
-```
-
-## 标准安装方式
-
-使用 `skill-harness` setup 中的标准方式，不让 agent 自行发挥宿主配置结构。
-
-### 1. `context7`
-
-#### 检测方式
-
-- `Claude Code`：检查 `mcpServers` 中是否存在 `context7`
-- `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.context7]`
-- `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.context7`
-- `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.context7`
-- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `context7`
-- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `context7`
+当 code agent 未识别时，脚本输出通用 MCP JSON。手动配置时也可参考：
 
 ```json
 {
@@ -256,595 +98,172 @@ npm install -g @tiny-fish/cli
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "exa": {
+      "type": "http",
+      "url": "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey"
+    },
+    "mcp-deepwiki": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-deepwiki@latest"]
+    },
+    "github-fetcher": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github-fetcher-mcp@latest"]
     }
   }
 }
 ```
 
-Windows 下可改成：
+## Pi 专项：extension + mcp.json
+
+原生 Pi（`@mariozechner/pi-coding-agent`）**没有** MCP add/list 内建命令，接 MCP 必须通过 extension。
+
+### 1. 安装 extension（一次性）
+
+```bash
+pi install npm:pi-mcp-extension
+pi list
+```
+
+### 2. 编辑配置文件
+
+- 全局：`~/.pi/agent/mcp.json`
+- 项目：`.pi/mcp.json`（覆盖全局；脚本检测时优先读取）
+
+Pi-mcp-extension 的 server 用 `transport`（不是 `type`）+ `lifecycle` 字段。完整示例：
 
 ```json
 {
   "mcpServers": {
     "context7": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "transport": "stdio",
+      "lifecycle": "lazy"
+    },
+    "exa": {
+      "transport": "streamable-http",
+      "url": "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey",
+      "lifecycle": "eager"
+    },
+    "mcp-deepwiki": {
+      "command": "npx",
+      "args": ["-y", "mcp-deepwiki@latest"],
+      "transport": "stdio",
+      "lifecycle": "lazy"
+    },
+    "github-fetcher": {
+      "command": "npx",
+      "args": ["-y", "github-fetcher-mcp@latest"],
+      "transport": "stdio",
+      "lifecycle": "lazy"
     }
   }
 }
 ```
 
-#### `Codex`
+- `transport`：`stdio`（本地进程）、`streamable-http`（远程，推荐）、`sse`（旧版兼容）。
+- `lifecycle`：`eager`（会话启动即连）、`lazy`（手动 `/mcp:start`）。远程建议 `eager`，本地 stdio 建议 `lazy`。
 
-```toml
-[mcp_servers.context7]
-command = "npx"
-args = ["-y", "@upstash/context7-mcp@latest"]
-```
+### 3. 验证
 
-Windows 下可改成：
+编辑后重启 pi，在会话内输入 `/mcp` 查看连接状态；`/mcp <server>` 看详情，`/mcp:start <server>` 手动启动 lazy server。
 
-```toml
-[mcp_servers.context7]
-command = "cmd"
-args = ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
-```
+## 手动配置参考（自动安装失败时）
 
-#### `OpenCode`
+正常情况由 `setup-mcp.sh` 自动处理，无需手动编辑。以下仅在自动安装失败或 code agent 未被识别时作参考。
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "context7": {
-      "type": "local",
-      "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
-      "enabled": true
-    }
-  }
-}
-```
-
-Windows 下可写成：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "context7": {
-      "type": "local",
-      "command": ["cmd", "/c", "npx", "-y", "@upstash/context7-mcp@latest"],
-      "enabled": true
-    }
-  }
-}
-```
-
-#### `QwenCode`
+### Claude Code
 
 ```bash
-# Unix / macOS
+claude mcp add-json -s user context7 '{"type":"stdio","command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
+claude mcp add --transport http -s user exa "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey"
+claude mcp add-json -s user mcp-deepwiki '{"type":"stdio","command":"npx","args":["-y","mcp-deepwiki@latest"]}'
+claude mcp add-json -s user github-fetcher '{"type":"stdio","command":"npx","args":["-y","github-fetcher-mcp@latest"]}'
+```
+
+Windows 下 stdio 命令可改为 `cmd /c npx -y <package>`。
+
+### Codex
+
+```bash
+codex mcp add context7 -- npx -y @upstash/context7-mcp@latest
+codex mcp add exa --url "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey"
+codex mcp add mcp-deepwiki -- npx -y mcp-deepwiki@latest
+codex mcp add github-fetcher -- npx -y github-fetcher-mcp@latest
+```
+
+Windows 下 stdio 命令可改为 `cmd /c npx -y <package>`。
+
+### OpenCode
+
+编辑 `~/.config/opencode/opencode.json`，在 MCP 配置对象内加入，编辑后重启 opencode 即可：
+
+```json
+{
+  "context7": {
+    "type": "local",
+    "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+    "enabled": true
+  },
+  "exa": {
+    "type": "remote",
+    "url": "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey",
+    "enabled": true
+  },
+  "mcp-deepwiki": {
+    "type": "local",
+    "command": ["npx", "-y", "mcp-deepwiki@latest"],
+    "enabled": true
+  },
+  "github-fetcher": {
+    "type": "local",
+    "command": ["npx", "-y", "github-fetcher-mcp@latest"],
+    "enabled": true
+  }
+}
+```
+
+### Qwen Code
+
+```bash
 qwen mcp add -s user -t stdio context7 npx -y @upstash/context7-mcp@latest
-
-# Windows
-qwen mcp add -s user -t stdio context7 cmd /c npx -y @upstash/context7-mcp@latest
-```
-
-#### `Hermes`
-
-```bash
-# Unix / macOS
-hermes mcp add context7 --command "npx" --args "-y @upstash/context7-mcp@latest"
-
-# Windows
-hermes mcp add context7 --command "cmd" --args "/c npx -y @upstash/context7-mcp@latest"
-```
-
-或手动编辑 `~/.hermes/config.yaml`：
-
-```yaml
-mcp_servers:
-  context7:
-    command: "npx"
-    args: ["-y", "@upstash/context7-mcp@latest"]
-```
-
-Windows：
-
-```yaml
-mcp_servers:
-  context7:
-    command: "cmd"
-    args: ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
-```
-
-#### `Pi`
-
-手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
-
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
-    }
-  }
-}
-```
-
-Windows：
-
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@upstash/context7-mcp@latest"]
-    }
-  }
-}
-```
-
-### 2. `exa`
-
-#### 检测方式
-
-- `Claude Code`：检查 `mcpServers` 中是否存在 `exa`
-- `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.exa]`
-- `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.exa`
-- `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.exa`
-- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `exa`
-- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `exa`
-
-```json
-{
-  "mcpServers": {
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp"
-    }
-  }
-}
-```
-
-有 key（优先从 `credentials/exa` 文件读取）：
-
-```json
-{
-  "mcpServers": {
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
-    }
-  }
-}
-```
-
-#### `Codex`
-
-无 key：
-
-```toml
-[mcp_servers.exa]
-url = "https://mcp.exa.ai/mcp"
-```
-
-有 key：
-
-```toml
-[mcp_servers.exa]
-url = "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
-```
-
-只有在用户更偏好命令行时，才补充：
-
-```powershell
-codex mcp add exa --url "https://mcp.exa.ai/mcp"
-```
-
-#### `OpenCode`
-
-无 key：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "exa": {
-      "type": "remote",
-      "url": "https://mcp.exa.ai/mcp",
-      "enabled": true
-    }
-  }
-}
-```
-
-有 key：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "exa": {
-      "type": "remote",
-      "url": "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY",
-      "enabled": true
-    }
-  }
-}
-```
-
-#### `QwenCode`
-
-```bash
-# 无 key
-qwen mcp add -s user -t http exa https://mcp.exa.ai/mcp
-
-# 有 key
-qwen mcp add -s user -t http exa "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
-```
-
-#### `Hermes`
-
-无 key：
-
-```bash
-hermes mcp add exa --url "https://mcp.exa.ai/mcp"
-```
-
-有 key：
-
-```bash
-hermes mcp add exa --url "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
-```
-
-或手动编辑 `~/.hermes/config.yaml`：
-
-```yaml
-mcp_servers:
-  exa:
-    url: "https://mcp.exa.ai/mcp"
-```
-
-#### `Pi`
-
-手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
-
-无 key：
-
-```json
-{
-  "mcpServers": {
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp"
-    }
-  }
-}
-```
-
-有 key：
-
-```json
-{
-  "mcpServers": {
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp?exaApiKey=从credentials读取的_EXA_API_KEY"
-    }
-  }
-}
-```
-
-### 3. `mcp-deepwiki`
-
-#### 检测方式
-
-- `Claude Code`：检查 `mcpServers` 中是否存在 `mcp-deepwiki`
-- `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.mcp-deepwiki]`
-- `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.mcp-deepwiki`
-- `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.mcp-deepwiki`
-- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `mcp-deepwiki`
-- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `mcp-deepwiki`
-
-#### `Claude Code`
-
-```json
-{
-  "mcpServers": {
-    "mcp-deepwiki": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "mcp-deepwiki@latest"]
-    }
-  }
-}
-```
-
-Windows 下可改成：
-
-```json
-{
-  "mcpServers": {
-    "mcp-deepwiki": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "mcp-deepwiki@latest"]
-    }
-  }
-}
-```
-
-#### `Codex`
-
-```toml
-[mcp_servers.mcp-deepwiki]
-command = "npx"
-args = ["-y", "mcp-deepwiki@latest"]
-```
-
-Windows 下可改成：
-
-```toml
-[mcp_servers.mcp-deepwiki]
-command = "cmd"
-args = ["/c", "npx", "-y", "mcp-deepwiki@latest"]
-```
-
-#### `OpenCode`
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "mcp-deepwiki": {
-      "type": "local",
-      "command": ["npx", "-y", "mcp-deepwiki@latest"],
-      "enabled": true
-    }
-  }
-}
-```
-
-Windows 下可写成：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "mcp-deepwiki": {
-      "type": "local",
-      "command": ["cmd", "/c", "npx", "-y", "mcp-deepwiki@latest"],
-      "enabled": true
-    }
-  }
-}
-```
-
-#### `QwenCode`
-
-```bash
-# Unix / macOS
+qwen mcp add -s user -t http exa "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey"
 qwen mcp add -s user -t stdio mcp-deepwiki npx -y mcp-deepwiki@latest
-
-# Windows
-qwen mcp add -s user -t stdio mcp-deepwiki cmd /c npx -y mcp-deepwiki@latest
+qwen mcp add -s user -t stdio github-fetcher npx -y github-fetcher-mcp@latest
 ```
 
-#### `Hermes`
+### Hermes
 
 ```bash
-# Unix / macOS
+hermes mcp add context7 --command "npx" --args "-y @upstash/context7-mcp@latest"
+hermes mcp add exa --url "https://mcp.exa.ai/mcp?exaApiKey=你的ExaKey"
 hermes mcp add mcp-deepwiki --command "npx" --args "-y mcp-deepwiki@latest"
-
-# Windows
-hermes mcp add mcp-deepwiki --command "cmd" --args "/c npx -y mcp-deepwiki@latest"
+hermes mcp add github-fetcher --command "npx" --args "-y github-fetcher-mcp@latest"
 ```
 
-或手动编辑 `~/.hermes/config.yaml`：
+### Pi
 
-```yaml
-mcp_servers:
-  mcp-deepwiki:
-    command: "npx"
-    args: ["-y", "mcp-deepwiki@latest"]
-```
-
-#### `Pi`
-
-手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
-
-```json
-{
-  "mcpServers": {
-    "mcp-deepwiki": {
-      "command": "npx",
-      "args": ["-y", "mcp-deepwiki@latest"]
-    }
-  }
-}
-```
-
-Windows：
-
-```json
-{
-  "mcpServers": {
-    "mcp-deepwiki": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "mcp-deepwiki@latest"]
-    }
-  }
-}
-```
-
-### 4. `github-fetcher`
-
-#### 检测方式
-
-- `Claude Code`：检查 `mcpServers` 中是否存在 `github-fetcher`
-- `Codex`：检查 `config.toml` 中是否存在 `[mcp_servers.github-fetcher]`
-- `OpenCode`：检查 `opencode.json` 中是否存在 `mcp.github-fetcher`
-- `QwenCode`：检查 `settings.json` 中是否存在 `mcpServers.github-fetcher`
-- `Hermes`：检查 `config.yaml` 的 `mcp_servers` 中是否存在 `github-fetcher`
-- `Pi`：检查 `mcp.json` 的 `mcpServers` 中是否存在 `github-fetcher`
-
-#### `Claude Code`
-
-```json
-{
-  "mcpServers": {
-    "github-fetcher": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "github-fetcher-mcp"]
-    }
-  }
-}
-```
-
-Windows 下可改成：
-
-```json
-{
-  "mcpServers": {
-    "github-fetcher": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "github-fetcher-mcp"]
-    }
-  }
-}
-```
-
-#### `Codex`
-
-```toml
-[mcp_servers.github-fetcher]
-command = "npx"
-args = ["-y", "github-fetcher-mcp"]
-```
-
-Windows 下可改成：
-
-```toml
-[mcp_servers.github-fetcher]
-command = "cmd"
-args = ["/c", "npx", "-y", "github-fetcher-mcp"]
-```
-
-#### `OpenCode`
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "github-fetcher": {
-      "type": "local",
-      "command": ["npx", "-y", "github-fetcher-mcp"],
-      "enabled": true
-    }
-  }
-}
-```
-
-Windows 下可写成：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "github-fetcher": {
-      "type": "local",
-      "command": ["cmd", "/c", "npx", "-y", "github-fetcher-mcp"],
-      "enabled": true
-    }
-  }
-}
-```
-
-#### `QwenCode`
-
-```bash
-# Unix / macOS
-qwen mcp add -s user -t stdio github-fetcher npx -y github-fetcher-mcp
-
-# Windows
-qwen mcp add -s user -t stdio github-fetcher cmd /c npx -y github-fetcher-mcp
-```
-
-#### `Hermes`
-
-```bash
-# Unix / macOS
-hermes mcp add github-fetcher --command "npx" --args "-y github-fetcher-mcp"
-
-# Windows
-hermes mcp add github-fetcher --command "cmd" --args "/c npx -y github-fetcher-mcp"
-```
-
-或手动编辑 `~/.hermes/config.yaml`：
-
-```yaml
-mcp_servers:
-  github-fetcher:
-    command: "npx"
-    args: ["-y", "github-fetcher-mcp"]
-```
-
-#### `Pi`
-
-手动编辑 `~/.pi/agent/mcp.json`，在 `mcpServers` 对象内添加：
-
-```json
-{
-  "mcpServers": {
-    "github-fetcher": {
-      "command": "npx",
-      "args": ["-y", "github-fetcher-mcp"]
-    }
-  }
-}
-```
-
-Windows：
-
-```json
-{
-  "mcpServers": {
-    "github-fetcher": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "github-fetcher-mcp"]
-    }
-  }
-}
-```
+不要使用 Pi 的 MCP add 子命令。按上文“Pi 专项”安装 `pi-mcp-extension` 并编辑 `~/.pi/agent/mcp.json`。
 
 ## 成功标准
 
-- 缺失的 MCP 已通过 `setup-mcp.sh` 安装（注册到配置文件）
-- 标志文件 `{state_dir}/{agent}` 已创建
-- 告知用户需要重启以激活新安装的 MCP
-- 重启后四项 MCP 均应可用
-
-## 重启说明
-
-`claude mcp add` / `codex mcp add` / `hermes mcp add` / `pi`（手动编辑 mcp.json）等命令将 MCP 注册到配置文件，但不会在当前会话中加载。这是所有 code agent 的共同行为：
-- 安装完成后，MCP 配置已写入，但当前会话仍无法使用
-- 用户重启 code agent 后，新 MCP 才会被加载
-- 安装完成后应告知用户重启，不在当前会话中尝试使用未加载的 MCP
+- 普通 `$search-web` 不运行 `detect.sh`。
+- `$search-web setup` 才执行 setup 流程。
+- Context7 不询问、不使用 API Key。
+- Exa API Key 必需，缺失时中止。
+- 全局 npm 安装仅 `@tiny-fish/cli@latest`。
+- 3 个本地 MCP server 由 `npx -y` 按需拉取。
+- Pi 使用 `pi-mcp-extension`、`transport` 和 `lifecycle` 配置。
+- setup 后提示重启 code agent。
 
 ## 常见错误
 
-- 没先运行 `bash scripts/detect.sh`，就直接套用某个宿主的配置格式
-- 继续保留手写的环境变量 / prompt / 工具指纹探测逻辑
-- 每检测一个 MCP 就调用一次 `mcp list`（应只调一次，结果存变量 grep 判断）
-- 通过跨 skill 相对路径调用别的检测脚本
-- 没写死不同宿主的配置路径，交给 agent 自己猜
-- `Codex` 把 `context7`、`mcp-deepwiki` 或 `github-fetcher` 错写成远程 URL 配置
-- 用户明确没有 key，却仍然给 `exa` 传入占位符 key
-- 用户明确有 key，却不先索取就直接写配置
-- 把其他搜索型 MCP 当成 `Exa` 的备选搜索工具；指定备用只允许 `TinyFish` CLI
-- `credentials/tinyfish` 已有非空值时仍重复询问用户
-- 写入 `credentials/tinyfish` 后没有同步写入永久环境变量 `TINYFISH_API_KEY`
-- Windows 下写入系统级环境变量而不是用户级环境变量
-- 安装 MCP 后不提示用户重启
-- 用 `mcp-deepwiki` 替代 `github-fetcher` 的文件读取，或反之
+- 把 Context7 当成需要 Key 的 MCP。
+- Exa 未提供 Key 时继续安装无 Key URL。
+- 把 `TinyFish` 当成 MCP 安装。
+- 对 Pi 调用不存在的 MCP add/list 子命令。
+- 写完 MCP 配置后不重启 code agent。
