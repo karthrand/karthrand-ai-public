@@ -161,18 +161,4 @@ os_type=$(detect_os_type "$runtime_type")
 
 state_path="$(get_state_dir "$DEFAULT_SKILL_NAME")"
 
-# 初始化检查：状态目录下是否存在当前 agent 类型的标志文件
-# 例如 ~/.config/skill-harness/claude-code
-# agent=unknown 时跳过标志文件检查，直接视为已初始化
-if [ "$agent" = "unknown" ]; then
-  initialized="true"
-else
-  init_flag="${state_path}${agent}"
-  if [ -f "$init_flag" ]; then
-    initialized="true"
-  else
-    initialized="false"
-  fi
-fi
-
-printf 'agent=%s\nos=%s\nstate_dir=%s\ninitialized=%s\n' "$agent" "$os_type" "$state_path" "$initialized"
+printf 'agent=%s\nos=%s\nstate_dir=%s\n' "$agent" "$os_type" "$state_path"

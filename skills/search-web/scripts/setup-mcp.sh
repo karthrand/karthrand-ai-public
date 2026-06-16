@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# setup-mcp.sh - search-web 技能 MCP 自动安装脚本
+# setup-mcp.sh - search-web setup 初始化脚本
 #
 # 用法:
-#   bash scripts/setup-mcp.sh --mcp context7
+#   bash scripts/setup-mcp.sh --api-key "EXA_API_KEY=xxx"
 #   bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=xxx"
-#   bash scripts/setup-mcp.sh --mcp github-fetcher --force
-#   bash scripts/setup-mcp.sh --mcp all
-#   bash scripts/setup-mcp.sh --agent claude-code --os windows --mcp context7
+#   bash scripts/setup-mcp.sh --mcp context7
+#   bash scripts/setup-mcp.sh --agent codex --os windows --api-key "EXA_API_KEY=xxx"
 #
 # 必需文件: scripts/detect.sh (同目录下)
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_NAME="search-web"
 
 # ==============================================================================
@@ -21,38 +20,35 @@ SKILL_NAME="search-web"
 
 AGENT=""
 OS_TYPE=""
-MCP_NAME=""
+MCP_NAME="all"
 API_KEY=""
 SCOPE="user"
 FORCE=0
-ALL_MCP_LIST="context7 exa mcp-deepwiki github-fetcher"
-
+ALL_MCP_LIST="context7 mcp-deepwiki github-fetcher exa"
 
 usage() {
   cat <<'EOF'
 用法: setup-mcp.sh [选项]
 
-search-web 技能 MCP 自动安装脚本
+search-web setup 初始化脚本
 
 选项:
   --agent <类型>     目标 code agent (claude-code|codex|opencode|qwen-code|hermes|pi)
                     不传则自动调用 detect.sh 检测
   --os <类型>        目标运行时 OS (windows|linux|macos)
                     不传则自动调用 detect.sh 检测
-  --mcp <名称>      MCP 名称 (context7|exa|mcp-deepwiki|github-fetcher|all)
-                    必需参数；all 表示安装全部四项
-  --api-key <值>     API Key，格式 "ENV_VAR_NAME=value"
-                    仅 context7/exa 可选
+  --mcp <名称>       MCP 名称 (context7|exa|mcp-deepwiki|github-fetcher|all)，默认 all
+  --api-key <值>     Exa API Key，格式 "EXA_API_KEY=value"；安装 exa 或未知 agent 时必需
   --scope <范围>     安装作用域 (user|project)，默认 user
-  --force            强制重新安装，忽略检测
-  -h                 显示帮助
+  --force            强制重新安装 MCP，忽略检测
+  -h, --help         显示帮助
 
 示例:
-  bash scripts/setup-mcp.sh --mcp context7
+  bash scripts/setup-mcp.sh --api-key "EXA_API_KEY=xxx"
+  bash scripts/setup-mcp.sh --mcp all --api-key "EXA_API_KEY=xxx"
   bash scripts/setup-mcp.sh --mcp exa --api-key "EXA_API_KEY=xxx"
-  bash scripts/setup-mcp.sh --mcp github-fetcher --force
-  bash scripts/setup-mcp.sh --mcp all
-  bash scripts/setup-mcp.sh --agent claude-code --os windows --mcp context7
+  bash scripts/setup-mcp.sh --mcp context7
+  bash scripts/setup-mcp.sh --agent codex --os windows --api-key "EXA_API_KEY=xxx"
 EOF
 }
 
@@ -69,11 +65,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ -z "$MCP_NAME" ]; then
-  echo "错误: --mcp 参数是必需的" >&2
-  usage
-  exit 1
-fi
+case "$MCP_NAME" in
+  context7|mcp-deepwiki|github-fetcher|exa|all) ;;
+  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1 ;;
+esac
 
 # ==============================================================================
 # MCP 注册表
@@ -83,7 +78,7 @@ get_npm_package() {
   case "$1" in
     context7)       printf '%s' "@upstash/context7-mcp@latest" ;;
     mcp-deepwiki)   printf '%s' "mcp-deepwiki@latest" ;;
-    github-fetcher) printf '%s' "github-fetcher-mcp" ;;
+    github-fetcher) printf '%s' "github-fetcher-mcp@latest" ;;
     exa|all)        printf '' ;;
     *)              printf '' ;;
   esac
@@ -93,10 +88,13 @@ is_remote_mcp() {
   [ "$1" = "exa" ]
 }
 
-case "$MCP_NAME" in
-  context7|mcp-deepwiki|github-fetcher|exa|all) ;;
-  *) echo "错误: 不支持的 MCP 名称: $MCP_NAME（支持: context7|exa|mcp-deepwiki|github-fetcher|all）" >&2; exit 1 ;;
-esac
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+is_windows() {
+  [ "$OS_TYPE" = "windows" ]
+}
 
 # ==============================================================================
 # 环境检测（单次调用 detect.sh）
@@ -112,10 +110,6 @@ if [ -z "$OS_TYPE" ]; then
 fi
 STATE_DIR="$(printf '%s' "$detect_output" | grep '^state_dir=' | cut -d= -f2-)"
 
-if [ -z "$AGENT" ] || [ "$AGENT" = "unknown" ]; then
-  echo "错误: 无法检测当前 code agent 类型，请通过 --agent 参数指定" >&2
-  exit 1
-fi
 if [ -z "$OS_TYPE" ] || [ "$OS_TYPE" = "unknown" ]; then
   echo "错误: 无法检测当前 OS 类型，请通过 --os 参数指定" >&2
   exit 1
@@ -126,28 +120,147 @@ echo "OS: $OS_TYPE"
 echo "状态目录: $STATE_DIR"
 
 # ==============================================================================
+# 必需 CLI 与密钥
+# ==============================================================================
+
+ensure_npm_available() {
+  if ! command_exists npm; then
+    echo "错误: 未找到 npm。请先安装 Node.js/npm 后重新运行 setup。" >&2
+    exit 1
+  fi
+}
+
+# 仅 @tiny-fish/cli 需要全局安装（CLI 要进 PATH）；
+# context7 / mcp-deepwiki / github-fetcher 是 MCP server，由 npx -y 按需拉取，不全局安装。
+ensure_tinyfish_cli() {
+  ensure_npm_available
+  if command_exists tinyfish; then
+    echo "TinyFish CLI 已可用。"
+    return 0
+  fi
+  echo "安装全局 npm 包: @tiny-fish/cli@latest"
+  npm install -g @tiny-fish/cli@latest
+  if ! command_exists tinyfish; then
+    echo "错误: @tiny-fish/cli 已安装但 tinyfish 命令不可用，请检查 npm 全局 bin 是否在 PATH 中。" >&2
+    exit 1
+  fi
+}
+
+prompt_secret() {
+  local label="$1"
+  if [ ! -t 0 ]; then
+    echo "错误: 当前为非交互环境（stdin 非 TTY），无法交互输入。请通过 --api-key 参数传入 Exa API Key。" >&2
+    exit 1
+  fi
+  local value=""
+  printf '%s' "$label" >&2
+  read -r -s value
+  printf '\n' >&2
+  printf '%s' "$value"
+}
+
+# Exa Key 必需：优先 --api-key 参数，否则交互询问；为空则报错退出。
+resolve_exa_key() {
+  local key=""
+  if [ -n "$API_KEY" ]; then
+    case "$API_KEY" in
+      EXA_API_KEY=*) ;;
+      *) echo "错误: --api-key 必须使用 EXA_API_KEY=value 格式。" >&2; exit 1 ;;
+    esac
+    key="$(printf '%s' "$API_KEY" | cut -d '=' -f 2-)"
+  else
+    key="$(prompt_secret "请输入 Exa API Key: ")"
+  fi
+  if [ -z "$key" ]; then
+    echo "错误: Exa MCP 必须提供 Exa API Key。" >&2
+    exit 1
+  fi
+  printf '%s' "$key"
+}
+
+get_user_env_tinyfish_key() {
+  if is_windows && command_exists powershell; then
+    powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('TINYFISH_API_KEY', 'User')" 2>/dev/null | tr -d '\r'
+  else
+    printf '%s' "${TINYFISH_API_KEY:-}"
+  fi
+}
+
+set_tinyfish_key_windows() {
+  local key="$1"
+  TINYFISH_KEY_TO_SAVE="$key" powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('TINYFISH_API_KEY', \$env:TINYFISH_KEY_TO_SAVE, 'User')"
+  export TINYFISH_API_KEY="$key"
+}
+
+# 向指定 shell 配置文件写入/更新 TINYFISH_API_KEY（兼容 BSD/GNU sed）。
+write_tinyfish_kv() {
+  local file="$1" key="$2"
+  local escaped
+  escaped="$(printf '%s' "$key" | sed 's/[&|\\]/\\&/g')"
+  touch "$file"
+  if grep -q '^export TINYFISH_API_KEY=' "$file"; then
+    sed -i.bak "s|^export TINYFISH_API_KEY=.*|export TINYFISH_API_KEY=\"$escaped\"|" "$file"
+  else
+    printf '\nexport TINYFISH_API_KEY="%s"\n' "$key" >> "$file"
+  fi
+}
+
+# 类 Unix 默认写 ~/.bashrc；macOS 默认 zsh，若 $SHELL 含 zsh 或 ~/.zshrc 已存在，同步写入。
+set_tinyfish_key_unix() {
+  local key="$1"
+  write_tinyfish_kv "$HOME/.bashrc" "$key"
+  if printf '%s' "${SHELL:-}" | grep -q 'zsh' || [ -f "$HOME/.zshrc" ]; then
+    write_tinyfish_kv "$HOME/.zshrc" "$key"
+  fi
+  export TINYFISH_API_KEY="$key"
+}
+
+ensure_tinyfish_api_key() {
+  local current_key
+  current_key="$(get_user_env_tinyfish_key)"
+  if [ -n "$current_key" ]; then
+    echo "TINYFISH_API_KEY 已设置。"
+    return 0
+  fi
+  local key
+  key="$(prompt_secret "请输入 TinyFish API Key: ")"
+  if [ -z "$key" ]; then
+    echo "错误: TinyFish CLI 已安装，但缺少 TINYFISH_API_KEY。" >&2
+    exit 1
+  fi
+  if is_windows; then
+    set_tinyfish_key_windows "$key"
+  else
+    set_tinyfish_key_unix "$key"
+  fi
+  echo "TINYFISH_API_KEY 已永久写入。"
+}
+
+# ==============================================================================
 # MCP 安装检测（一次 mcp list，grep 变量判断）
 # ==============================================================================
 
-# 调用一次 xxx mcp list，结果存变量
-# 输出格式：context7: cmd /c npx ... - ✓ Connected
 check_mcp_list() {
   local agent="$1"
   case "$agent" in
     claude-code) claude mcp list 2>/dev/null || echo "" ;;
     codex)       codex mcp list 2>/dev/null || echo "" ;;
-    opencode)    opencode mcp list 2>/dev/null || echo "" ;;
+    opencode)    opencode mcp list 2>/dev/null || cat "${HOME}/.config/opencode/opencode.json" 2>/dev/null || echo "" ;;
     qwen-code)   qwen mcp list 2>/dev/null || echo "" ;;
     hermes)      hermes mcp list 2>/dev/null || echo "" ;;
-    pi)          pi mcp list 2>/dev/null || echo "" ;;
+    pi)
+      if [ -f ".pi/mcp.json" ]; then
+        cat ".pi/mcp.json"
+      else
+        cat "${HOME}/.pi/agent/mcp.json" 2>/dev/null || echo ""
+      fi
+      ;;
     *)           echo "" ;;
   esac
 }
 
 MCP_LIST_OUTPUT=""
 
-# 根据 agent 类型匹配不同的 list 输出格式
-# claude/qwen: "name: cmd ..."  codex: 表格首列  opencode: ANSI 树形
 is_mcp_installed() {
   local mcp="$1"
   local agent="${2:-$AGENT}"
@@ -156,7 +269,7 @@ is_mcp_installed() {
       printf '%s' "$MCP_LIST_OUTPUT" | grep -q "^${mcp}:"
       ;;
     codex)
-      printf '%s' "$MCP_LIST_OUTPUT" | awk -v mcp="$mcp" 'NR>1 && $1==mcp'
+      printf '%s' "$MCP_LIST_OUTPUT" | awk -v mcp="$mcp" 'NR>1 && $1==mcp { found=1 } END { exit !found }'
       ;;
     opencode)
       printf '%s' "$MCP_LIST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -qw "$mcp"
@@ -165,8 +278,8 @@ is_mcp_installed() {
       printf '%s' "$MCP_LIST_OUTPUT" | grep -q "$mcp"
       ;;
     pi)
-      # pi mcp list 输出 Markdown："### context7（2 工具）"
-      printf '%s' "$MCP_LIST_OUTPUT" | grep -q "### $mcp"
+      # pi 无 mcp list CLI；读 ~/.pi/agent/mcp.json，匹配 server 名作为 JSON key。
+      printf '%s' "$MCP_LIST_OUTPUT" | grep -q "\"${mcp}\""
       ;;
     *)
       return 1
@@ -174,34 +287,25 @@ is_mcp_installed() {
   esac
 }
 
-# ==============================================================================
-# Credentials 读写（平面文件，零依赖）
-# ==============================================================================
-
-read_stored_key() {
-  local mcp="$1"
-  local key_file="${STATE_DIR}credentials/${mcp}"
-  if [ -f "$key_file" ]; then
-    local val
-    val="$(cat "$key_file")"
-    [ "$val" != "skipped" ] && [ -n "$val" ] && printf '%s' "$val" && return 0
+ensure_pi_mcp_extension() {
+  if ! command_exists pi; then
+    echo "错误: 未找到 pi 命令。" >&2
+    exit 1
   fi
-  return 1
-}
-
-save_stored_key() {
-  local mcp="$1" val="$2"
-  mkdir -p "${STATE_DIR}credentials"
-  printf '%s' "$val" > "${STATE_DIR}credentials/${mcp}"
+  # 依赖 `pi list` 输出包含 "pi-mcp-extension" 字样；pi 升级后若输出格式变更需同步更新此判定。
+  if pi list 2>/dev/null | grep -q "pi-mcp-extension"; then
+    echo "pi-mcp-extension 已安装。"
+    return 0
+  fi
+  echo "Pi 原生不带 MCP 入口，需要先安装 extension："
+  echo "  pi install npm:pi-mcp-extension"
+  echo "请执行上述命令后重新运行本脚本。"
+  exit 1
 }
 
 # ==============================================================================
 # 安装命令
 # ==============================================================================
-
-is_windows() {
-  [ "$OS_TYPE" = "windows" ]
-}
 
 install_mcp() {
   local mcp="$1"
@@ -277,23 +381,17 @@ install_stdio_mcp() {
       fi
       ;;
     pi)
-      # Pi 无 mcp add CLI，手动编辑 mcp.json
-      echo "Pi 无 mcp add CLI 命令，需要手动编辑 mcp.json："
+      echo "Pi 通过 pi-mcp-extension 读 ~/.pi/agent/mcp.json，请在 mcpServers 对象内添加："
       echo ""
-      if is_windows; then
-        echo "  \"$mcp\": {"
-        echo "    \"command\": \"cmd\","
-        echo "    \"args\": [\"/c\", \"npx\", \"-y\", \"$npm_pkg\"]"
-        echo "  }"
-      else
-        echo "  \"$mcp\": {"
-        echo "    \"command\": \"npx\","
-        echo "    \"args\": [\"-y\", \"$npm_pkg\"]"
-        echo "  }"
-      fi
+      echo "  \"$mcp\": {"
+      echo "    \"command\": \"npx\","
+      echo "    \"args\": [\"-y\", \"$npm_pkg\"],"
+      echo "    \"transport\": \"stdio\","
+      echo "    \"lifecycle\": \"lazy\""
+      echo "  }"
       echo ""
-      echo "配置文件位置: ~/.pi/agent/mcp.json"
-      echo "请在 mcpServers 对象内添加上述配置，然后重新运行本脚本进行状态标记更新。"
+      echo "配置文件: ~/.pi/agent/mcp.json（全局）或 .pi/mcp.json（项目）"
+      echo "编辑后重启 pi，在会话内用 /mcp 验证。"
       ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2
@@ -306,33 +404,22 @@ install_remote_mcp() {
   local mcp="$1"
   local agent="$2"
   local os="$3"
-
-  local exa_url="https://mcp.exa.ai/mcp"
-
-  # 优先使用 --api-key 参数，其次从 credentials 文件读取
-  if [ -n "$API_KEY" ]; then
-    local key_value
-    key_value="$(printf '%s' "$API_KEY" | cut -d '=' -f 2-)"
-    if [ -n "$key_value" ]; then
-      exa_url="https://mcp.exa.ai/mcp?exaApiKey=${key_value}"
-    fi
-  else
-    local stored_key
-    if stored_key="$(read_stored_key exa)" && [ -n "$stored_key" ]; then
-      exa_url="https://mcp.exa.ai/mcp?exaApiKey=${stored_key}"
-      echo "从 credentials 文件读取已存储的 Exa API Key"
-    fi
-  fi
+  local exa_key
+  exa_key="$(resolve_exa_key)" || exit 1
+  local exa_url="https://mcp.exa.ai/mcp?exaApiKey=${exa_key}"
 
   case "$agent" in
     claude-code)
+      echo "Exa MCP URL 已包含 API Key，输出中已隐藏。"
       claude mcp add --transport http -s "$SCOPE" exa "$exa_url"
       ;;
     codex)
+      echo "Exa MCP URL 已包含 API Key，输出中已隐藏。"
       codex mcp add exa --url "$exa_url"
       ;;
     opencode)
       echo "OpenCode 无 CLI 命令，需要手动编辑 opencode.json："
+      echo "以下配置包含 Exa API Key，请勿分享输出。"
       echo ""
       echo "  \"exa\": {"
       echo "    \"type\": \"remote\","
@@ -343,20 +430,25 @@ install_remote_mcp() {
       echo "配置文件位置: ~/.config/opencode/opencode.json"
       ;;
     qwen-code)
+      echo "Exa MCP URL 已包含 API Key，输出中已隐藏。"
       qwen mcp add -s "$SCOPE" -t http exa "$exa_url"
       ;;
     hermes)
+      echo "Exa MCP URL 已包含 API Key，输出中已隐藏。"
       hermes mcp add exa --url "$exa_url"
       ;;
     pi)
-      echo "Pi 无 mcp add CLI 命令，需要手动编辑 mcp.json："
+      echo "Pi 通过 pi-mcp-extension 读 ~/.pi/agent/mcp.json，请在 mcpServers 对象内添加："
+      echo "以下配置包含 Exa API Key，请勿分享输出。"
       echo ""
       echo "  \"exa\": {"
-      echo "    \"url\": \"$exa_url\""
+      echo "    \"transport\": \"streamable-http\","
+      echo "    \"url\": \"$exa_url\","
+      echo "    \"lifecycle\": \"eager\""
       echo "  }"
       echo ""
-      echo "配置文件位置: ~/.pi/agent/mcp.json"
-      echo "请在 mcpServers 对象内添加上述配置，然后重新运行本脚本进行状态标记更新。"
+      echo "配置文件: ~/.pi/agent/mcp.json（全局）或 .pi/mcp.json（项目）"
+      echo "编辑后重启 pi，在会话内用 /mcp 验证。"
       ;;
     *)
       echo "错误: 不支持的 agent 类型: $agent" >&2
@@ -365,13 +457,36 @@ install_remote_mcp() {
   esac
 }
 
-# ==============================================================================
-# 标志文件管理
-# ==============================================================================
+print_generic_mcp_json() {
+  local exa_key="$1"
+  cat <<EOF
+当前 code agent 未识别，无法自动写入 MCP 配置。请参考以下通用 MCP JSON（写入对应 agent 的配置文件后重启）：
+以下配置包含 Exa API Key，请勿分享输出。
 
-create_init_flag() {
-  mkdir -p "$STATE_DIR"
-  touch "${STATE_DIR}${AGENT}"
+{
+  "mcpServers": {
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "exa": {
+      "type": "http",
+      "url": "https://mcp.exa.ai/mcp?exaApiKey=${exa_key}"
+    },
+    "mcp-deepwiki": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-deepwiki@latest"]
+    },
+    "github-fetcher": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github-fetcher-mcp@latest"]
+    }
+  }
+}
+EOF
 }
 
 # ==============================================================================
@@ -393,16 +508,13 @@ run_install() {
   echo "MCP $mcp 安装命令已执行。"
 }
 
-if [ "$MCP_NAME" = "all" ]; then
-  echo "批量安装模式"
-  echo ""
-
-  if [ "$FORCE" -eq 0 ]; then
-    # 只调用一次 mcp list
-    MCP_LIST_OUTPUT="$(check_mcp_list "$AGENT")"
-
+install_requested_mcp() {
+  local mcp
+  if [ "$MCP_NAME" = "all" ]; then
+    echo "批量安装模式"
+    echo ""
     for mcp in $ALL_MCP_LIST; do
-      if is_mcp_installed "$mcp"; then
+      if [ "$FORCE" -eq 0 ] && is_mcp_installed "$mcp"; then
         echo "MCP $mcp 已安装，跳过。"
         echo ""
       else
@@ -411,34 +523,36 @@ if [ "$MCP_NAME" = "all" ]; then
       fi
     done
   else
-    # --force 模式：跳过检测，全部安装
-    for mcp in $ALL_MCP_LIST; do
-      run_install "$mcp"
-      echo ""
-    done
-  fi
-
-  # Pi 无 mcp add CLI，仅打印手动编辑指令，不创建标志文件
-  if [ "$AGENT" != "pi" ]; then
-    create_init_flag
-    echo "批量安装完成。请重启 code agent 后验证 MCP 是否可用。"
-  else
-    echo "批量提示完成。请手动编辑 ~/.pi/agent/mcp.json 后重新运行本脚本进行状态标记更新。"
-  fi
-else
-  # 单项安装
-  if [ "$FORCE" -eq 0 ]; then
-    MCP_LIST_OUTPUT="$(check_mcp_list "$AGENT")"
-    if is_mcp_installed "$MCP_NAME"; then
-      echo "MCP $MCP_NAME 已安装，跳过。使用 --force 强制重新安装。"
-      exit 0
+    if [ "$FORCE" -eq 0 ] && is_mcp_installed "$MCP_NAME"; then
+      echo "MCP $MCP_NAME 已安装，跳过。"
+    else
+      run_install "$MCP_NAME"
     fi
   fi
+}
 
-  run_install "$MCP_NAME"
-  # Pi 无 mcp add CLI，仅打印手动编辑指令，不创建标志文件
-  if [ "$AGENT" != "pi" ]; then
-    create_init_flag
-  fi
-  echo "请重启 code agent 后验证 MCP 是否可用。"
+# 1. 确保 npm 与 tinyfish CLI（所有 agent 都需要）
+ensure_tinyfish_cli
+
+# 2. 未知 agent：必需 exa key → 输出通用 JSON → 收尾
+if [ -z "$AGENT" ] || [ "$AGENT" = "unknown" ]; then
+  exa_key="$(resolve_exa_key)" || exit 1
+  print_generic_mcp_json "$exa_key"
+  ensure_tinyfish_api_key
+  echo "请将上述 MCP JSON 写入你的 code agent 配置，并重启。"
+  exit 0
 fi
+
+# 3. pi：先确保 extension，再检测/输出配置（pi 无 CLI add）
+if [ "$AGENT" = "pi" ]; then
+  ensure_pi_mcp_extension
+fi
+
+# 4. 检测并安装缺失 MCP
+MCP_LIST_OUTPUT="$(check_mcp_list "$AGENT")"
+install_requested_mcp
+
+# 5. 写永久 TINYFISH_API_KEY
+ensure_tinyfish_api_key
+
+echo "setup 完成。请重启 code agent 后验证 MCP 是否可用。"
