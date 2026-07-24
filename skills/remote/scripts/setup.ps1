@@ -58,7 +58,14 @@ function Get-RuntimeType {
     param([string]$BashPath)
 
     $runtimeSh = (Join-Path $PSScriptRoot "runtime.sh") -replace '\\','/'
-    $runtimeType = (& $BashPath -lc "source '$runtimeSh'; remote_detect_runtime_type").Trim()
+    # bash -lc 启动时 profile 可能向 stdout 打印 banner(如 msys 的 etc 映射), 与 remote_detect_runtime_type 输出混杂,
+    # 拼接全部 stdout 后用正则提取已知 runtime type, 剥离 banner 污染
+    $rawOutput = (& $BashPath -lc "source '$runtimeSh'; remote_detect_runtime_type") -join "`n"
+    if ($rawOutput -match '(windows-msys|linux-wsl|linux-native|macos-native)') {
+        $runtimeType = $Matches[1]
+    } else {
+        $runtimeType = "unknown"
+    }
     if ([string]::IsNullOrWhiteSpace($runtimeType) -or $runtimeType -eq "unknown") {
         throw "未识别到当前执行环境，无法安全完成 remote setup。"
     }
