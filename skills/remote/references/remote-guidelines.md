@@ -8,7 +8,7 @@
 - 诊断类任务首轮不要用 `grep`、`head`、`tail` 预过滤
 - 多维采集优先并行执行
 - 信息不全时不要直接下结论
-- 远程命令必须走标准主链：Windows 用 `remote.ps1`，其他系统用 `remote.sh`
+- 远程命令必须走标准主链：按 `SKILL.md` 第 0 步两级判定选入口（非 Windows 一律 `remote.sh`；Windows 下 git bash 走 `remote.sh`，pwsh 走 `remote.ps1`）
 - 不要手工执行 `sshpass ... ssh ...`（仅适用于 Linux/macOS）
 - 连接失败后不要依次切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错
 - `Permission denied` 只能先解释为“远端拒绝了密码认证”
@@ -21,7 +21,13 @@
 ./skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"
 ```
 
-Windows 示例：
+Windows 示例（git bash 入口，推荐）：
+
+```bash
+bash ./skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"
+```
+
+Windows 示例（PowerShell 入口）：
 
 ```powershell
 .\skills\remote\scripts\remote.ps1 -Address "10.0.0.8" -Username root -Password "secret" -Command "hostname && whoami"

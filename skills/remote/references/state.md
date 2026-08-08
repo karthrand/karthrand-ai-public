@@ -1,6 +1,6 @@
 # Remote 状态文件说明
 
-`remote` skill 的本地状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不需要关注具体路径。状态文件只写入宿主本地目录，不写入仓库。
+`remote` skill 的本地状态目录跨平台统一为 `~/.local/share/remote`（即 `$XDG_DATA_HOME/remote`，未设置 XDG 时回落到 `$HOME/.local/share/remote`）。PowerShell 的 `$HOME` 与 git bash 的 `$HOME` 指向同一物理目录，ps1 与 sh 入口读写同一份状态。状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不需要关注具体路径。状态文件只写入宿主本地目录，不写入仓库。
 
 ## 1. bootstrap-state.json
 

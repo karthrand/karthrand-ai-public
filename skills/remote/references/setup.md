@@ -35,9 +35,9 @@ agent 不要靠口头约定或手工判断环境；必须复用标准脚本内�
 
 ## 状态目录
 
-状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不应直接拼接路径来读取 `bootstrap-state.json`。检查状态必须按执行环境选择对应命令：
-- `windows-msys`：`powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\remote.ps1 -CheckBootstrap`
-- `linux-wsl`、`linux-native`、`macos-native`：`bash ./skills/remote/scripts/remote.sh --check-bootstrap`
+状态目录跨平台统一为 `~/.local/share/remote`（`$XDG_DATA_HOME/remote`，未设置时回落到 `$HOME/.local/share/remote`）。PowerShell 的 `$HOME` 与 git bash 的 `$HOME` 指向同一物理目录，ps1 与 sh 入口读写同一份状态。状态目录由脚本内部函数自动确定（`remote.sh` / `setup.sh` 中的 `state_dir()`，`setup.ps1` 中的 `Get-StateDir`），agent 不应直接拼接路径来读取 `bootstrap-state.json`。检查状态必须按当前 shell 选择对应命令（入口选择见 `SKILL.md` 第 0 步两级判定）：
+- bash 环境（含 Windows git bash）：`bash ./skills/remote/scripts/remote.sh --check-bootstrap`
+- pwsh 环境（仅 Windows）：`powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\remote.ps1 -CheckBootstrap`
 
 setup 成功后写入：
 
@@ -73,21 +73,29 @@ setup 成功后写入：
 
 ### windows-msys
 
-执行方式：
+执行方式（按当前 shell 选择，入口判定见 `SKILL.md` 第 0 步）：
+
+git bash 入口：
+
+```bash
+bash ./skills/remote/scripts/setup.sh
+```
+
+PowerShell 入口：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
 ```
 
-Windows 使用 `SSH_ASKPASS` 机制，不需要安装 `sshpass`。setup 脚本只验证 SSH 可用性，不可用则抛异常。
+Windows 使用 `SSH_ASKPASS` 机制，不需要安装 `sshpass`。两个入口都只验证 SSH 可用性，不可用则抛异常。`setup.sh` 的 windows-msys 分支与 `setup.ps1` 写入等价的状态字段。
 
 状态文件写为 `runtime_type=windows-msys`、`bash_flavor=msys`、`auth_mechanism=ssh_askpass`
 
 注意：
 
-- `windows-msys` 下远程访问推荐通过 `scripts/remote.ps1` 进入。
+- `windows-msys` 下，git bash 入口直接用 `remote.sh` / `setup.sh`，PowerShell 入口用 `remote.ps1` / `setup.ps1`；不要在 git bash 里绕 `powershell -File remote.ps1` 再转回 bash。
 - 不允许在连接失败后依次切换 `sshpass -k`、`sshpass -e`、`sshpass -p` 试错。
-- `setup.ps1` 只负责验证，不负责直接远程连接。
+- `setup.ps1` / `setup.sh` 只负责验证，不负责直接远程连接。
 
 ### linux-wsl / linux-native
 

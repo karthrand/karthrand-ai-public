@@ -29,38 +29,19 @@ python_cmd() {
   return 1
 }
 
-convert_windows_path() {
-  local raw_path="$1"
-  if [ -z "$raw_path" ]; then
-    return 1
-  fi
-
-  if has_cmd wslpath; then
-    wslpath "$raw_path"
-    return 0
-  fi
-
-  if has_cmd cygpath; then
-    cygpath -u "$raw_path"
-    return 0
-  fi
-
-  printf '%s\n' "$raw_path"
-}
-
 state_dir() {
-  local base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-}"
-  if [ -n "$base_path" ]; then
-    printf '%s/%s\n' "$(convert_windows_path "$base_path")" "$STATE_SKILL_NAME"
-    return 0
-  fi
-
-  base_path="${XDG_DATA_HOME:-}"
+  # 统一使用 XDG 默认目录：$XDG_DATA_HOME/remote 或 ~/.local/share/remote。
+  # windows-msys 下 python(win32) 不认 /c/ 风格路径，用 cygpath -m 转为 C:/ 混合风格，
+  # 使 bash 与 Windows python 都能正确解析同一物理目录。
+  local base_path="${XDG_DATA_HOME:-}"
   if [ -z "$base_path" ]; then
     base_path="${HOME}/.local/share"
   fi
-
-  printf '%s/%s\n' "$base_path" "$STATE_SKILL_NAME"
+  local result="${base_path}/${STATE_SKILL_NAME}"
+  if [ "$(remote_detect_runtime_type)" = "windows-msys" ] && has_cmd cygpath; then
+    result="$(cygpath -m "$result")"
+  fi
+  printf '%s\n' "$result"
 }
 
 bootstrap_state_file() {
@@ -181,6 +162,78 @@ state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", 
 PY
 }
 
+probe_ssh_version() {
+  local output
+  output="$(ssh -V 2>&1 || true)"
+  extract_version_from_text "$output"
+}
+
+write_bootstrap_state_msys() {
+  # windows-msys 使用 SSH_ASKPASS 机制（无需 sshpass），状态字段对齐 setup.ps1。
+  local py ssh_version
+  py="$(python_cmd)" || {
+    log "缺少 python3/python，无法写入 bootstrap-state.json。"
+    exit 1
+  }
+
+  ssh_version="$(probe_ssh_version)"
+  [ -n "$ssh_version" ] || ssh_version="unknown"
+
+  STATE_DIR="$(state_dir)" \
+  BOOTSTRAP_STATE_FILE="$(bootstrap_state_file)" \
+  SSH_VERSION="$ssh_version" \
+  CURRENT_BASH_PATH="$(current_bash_path)" \
+  "$py" - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+state_dir = Path(os.environ["STATE_DIR"])
+state_file = Path(os.environ["BOOTSTRAP_STATE_FILE"])
+state_dir.mkdir(parents=True, exist_ok=True)
+now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+payload = {
+    "skill_name": "remote",
+    "sshpass_installed": False,
+    "sshpass_version": "none",
+    "sshpass_provider": "none",
+    "auth_mechanism": "ssh_askpass",
+    "ssh_installed": True,
+    "ssh_version": os.environ["SSH_VERSION"],
+    "os_type": "windows",
+    "runtime_type": "windows-msys",
+    "bash_available": True,
+    "bash_flavor": "msys",
+    "bash_path": os.environ["CURRENT_BASH_PATH"],
+    "windows_remote_ready": True,
+    "last_setup_at": now,
+    "last_verified_at": now,
+}
+
+state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+setup_msys() {
+  # windows-msys 使用 SSH_ASKPASS，走独立验证流程，不涉及 sshpass 安装。
+  if ! has_cmd ssh; then
+    log "windows-msys 下未检测到 ssh。SSH 通常随 Git for Windows 或 MSYS2 提供。"
+    exit 13
+  fi
+
+  local ssh_out
+  ssh_out="$(ssh -V 2>&1 || true)"
+  if [ -z "$ssh_out" ]; then
+    log "ssh -V 无输出，SSH 不可用。"
+    exit 13
+  fi
+
+  write_bootstrap_state_msys
+  log "SSH 已验证（SSH_ASKPASS 机制），状态文件已写入 $(bootstrap_state_file)。当前执行环境：windows-msys。"
+}
+
 install_with_sudo_if_needed() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -249,14 +302,16 @@ main() {
   local runtime_type
   runtime_type="$(current_runtime_type)"
 
+  # windows-msys 使用 SSH_ASKPASS，走独立验证流程，不涉及 sshpass 安装。
+  if [ "$runtime_type" = "windows-msys" ]; then
+    setup_msys
+    exit 0
+  fi
+
   if [ "$FORCE" -eq 0 ] && probe_sshpass; then
     log "检测到 sshpass，跳过安装。"
   else
     case "$runtime_type" in
-      windows-msys)
-        log "windows-msys 执行环境下请改用 powershell 执行 scripts/setup.ps1。"
-        exit 1
-        ;;
       macos-native)
         install_macos
         ;;

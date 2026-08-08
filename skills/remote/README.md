@@ -31,7 +31,7 @@ skills/remote/
 
 ## 状态目录
 
-状态目录由脚本内部函数自动确定，不在此列出具体路径。其中包含：
+状态目录跨平台统一为 `~/.local/share/remote`（即 `$XDG_DATA_HOME/remote`，未设置时回落到 `$HOME/.local/share/remote`）。PowerShell 的 `$HOME` 与 git bash 的 `$HOME` 指向同一物理目录，ps1 与 sh 入口读写同一份状态。其中包含：
 
 - `bootstrap-state.json`
 - `servers.json`
@@ -48,6 +48,16 @@ skills/remote/
 其中 `linux-wsl` 直接按 Linux 分支处理。具体判定方法、成功标准和修复边界统一见 `references/setup.md`。
 
 ### Windows
+
+Windows 入口按当前 shell 选择（两级判定）：git bash 走 `setup.sh` / `remote.sh`，pwsh 走 `setup.ps1` / `remote.ps1`。用 `echo "${BASH_VERSION:-}"` 区分——非空为 git bash，为空为 pwsh。
+
+git bash：
+
+```bash
+bash ./skills/remote/scripts/setup.sh
+```
+
+PowerShell：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\skills\remote\scripts\setup.ps1
@@ -66,7 +76,17 @@ bash ./skills/remote/scripts/setup.sh
 
 ### Windows
 
-Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.ps1`，它内部先按 `scripts/runtime.sh` 判定当前执行环境，再转发到 `bash -lc`：
+Windows 下入口按当前 shell 选择（两级判定，先 OS 再 shell）：`windows-msys` 下用 `echo "${BASH_VERSION:-}"` 区分，非空为 git bash，为空为 pwsh。
+
+git bash 入口（推荐，零桥接）：
+
+```bash
+bash ./skills/remote/scripts/remote.sh --save "10.0.0.8" --user root --password "secret"
+bash ./skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"
+bash ./skills/remote/scripts/remote.sh --parallel "10.0.0.8" "uptime" "free -h" "df -h"
+```
+
+PowerShell 入口（`remote.ps1` 内部转发到 `bash -lc remote.sh`）：
 
 ```powershell
 .\skills\remote\scripts\remote.ps1 -Save -Address "10.0.0.8" -Username root -Password "secret"
@@ -84,15 +104,9 @@ Windows 下所有远程访问都必须走 `bash -lc`。推荐入口是 `remote.p
 状态文件统一使用无 BOM 的 UTF-8 写入；读取端兼容历史 UTF-8 BOM 文件。
 `windows-msys` 下使用 `SSH_ASKPASS` 机制自动提供密码，保持纯非交互；凭据错误时应直接失败。
 
-如果手工执行，也只能显式使用：
-
-```powershell
-bash -lc './skills/remote/scripts/remote.sh "10.0.0.8" "hostname && whoami"'
-```
-
 禁止：
 
-- 在 Windows 下直接执行 `remote.sh`
+- 在 git bash 环境里绕 `powershell -File remote.ps1` 再转回 bash（会引入 PowerShell↔bash 的路径/转义桥接问题）
 - 在连接失败后手工切换不同的密码传递参数试错
 
 ### macOS / Linux

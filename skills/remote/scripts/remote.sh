@@ -36,25 +36,6 @@ current_runtime_type() {
   remote_detect_runtime_type
 }
 
-convert_windows_path() {
-  local raw_path="$1"
-  if [ -z "$raw_path" ]; then
-    return 1
-  fi
-
-  if has_cmd wslpath; then
-    wslpath "$raw_path"
-    return 0
-  fi
-
-  if has_cmd cygpath; then
-    cygpath -u "$raw_path"
-    return 0
-  fi
-
-  printf '%s\n' "$raw_path"
-}
-
 python_cmd() {
   if command -v python3 >/dev/null 2>&1; then
     printf 'python3'
@@ -143,19 +124,18 @@ refresh_runtime_context() {
 }
 
 state_dir() {
-  local base_path
-  base_path="${REMOTE_HOST_WINDOWS_LOCALAPPDATA:-}"
-  if [ -n "$base_path" ]; then
-    printf '%s/remote\n' "$(convert_windows_path "$base_path")"
-    return 0
-  fi
-
-  base_path="${XDG_DATA_HOME:-}"
+  # 统一使用 XDG 默认目录：$XDG_DATA_HOME/remote 或 ~/.local/share/remote。
+  # windows-msys 下 python(win32) 不认 /c/ 风格路径，用 cygpath -m 转为 C:/ 混合风格，
+  # 使 bash 与 Windows python 都能正确解析同一物理目录。
+  local base_path="${XDG_DATA_HOME:-}"
   if [ -z "$base_path" ]; then
     base_path="${HOME}/.local/share"
   fi
-
-  printf '%s/remote\n' "$base_path"
+  local result="${base_path}/remote"
+  if [ "$(remote_detect_runtime_type)" = "windows-msys" ] && has_cmd cygpath; then
+    result="$(cygpath -m "$result")"
+  fi
+  printf '%s\n' "$result"
 }
 
 bootstrap_state_file() {
@@ -254,8 +234,13 @@ bootstrap_matches_runtime() {
   fi
 
   saved_bash_path="$(read_bootstrap_field bash_path)"
-  if [ -n "$CURRENT_BASH_PATH" ] || [ -n "$saved_bash_path" ]; then
-    [ "$saved_bash_path" = "$CURRENT_BASH_PATH" ] || return 1
+  # windows-msys 下 command -v bash 的返回形式因脚本启动方式不同而不稳定
+  # （/usr/bin/bash 与 C:/Programs/.../bash 并存），不作为强匹配条件；
+  # bash_path 仅作诊断记录。Linux/macOS 下路径稳定，保留强匹配。
+  if [ "$CURRENT_RUNTIME_TYPE" != "windows-msys" ]; then
+    if [ -n "$CURRENT_BASH_PATH" ] || [ -n "$saved_bash_path" ]; then
+      [ "$saved_bash_path" = "$CURRENT_BASH_PATH" ] || return 1
+    fi
   fi
 
   if [ "$CURRENT_HOST_OS" = "windows" ]; then

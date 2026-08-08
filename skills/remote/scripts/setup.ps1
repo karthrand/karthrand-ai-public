@@ -16,12 +16,12 @@ function Quote-BashArg {
 }
 
 function Get-StateDir {
-    $base = $env:LOCALAPPDATA
-    if ([string]::IsNullOrWhiteSpace($base)) {
-        throw "未检测到 LOCALAPPDATA，无法写入 remote 状态目录。"
+    # 与 remote.sh/setup.sh 的 state_dir() 完全对齐：优先 XDG_DATA_HOME，回落 $HOME/.local/share/remote。
+    # 确保 ps1 与 sh 入口在任何环境下都读写同一物理目录。
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        return Join-Path $env:XDG_DATA_HOME "remote"
     }
-
-    return Join-Path $base "remote"
+    return Join-Path $HOME ".local\share\remote"
 }
 
 function Get-BootstrapStateFile {
@@ -182,9 +182,6 @@ if ($runtimeType -eq "linux-wsl") {
     $quoted = New-Object System.Collections.Generic.List[string]
     $quoted.Add("REMOTE_RUNTIME_TYPE=$(Quote-BashArg -Value $runtimeType)")
     $quoted.Add("REMOTE_HOST_BASH_PATH=$(Quote-BashArg -Value ($bash.Source -replace '\\', '/'))")
-    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        $quoted.Add("REMOTE_HOST_WINDOWS_LOCALAPPDATA=$(Quote-BashArg -Value $env:LOCALAPPDATA)")
-    }
     $quoted.Add((Quote-BashArg -Value (($scriptDir -replace '\\','/') + '/setup.sh')))
     if ($Force) {
         $quoted.Add("--force")
@@ -214,4 +211,4 @@ if (-not $verified) {
 }
 
 Write-Log "SSH 已完成验证（使用 SSH_ASKPASS 机制），状态文件已写入 $(Get-BootstrapStateFile)"
-Write-Log "Windows 下远程访问必须通过 scripts/remote.ps1 进入，当前执行环境为 $runtimeType。"
+Write-Log "当前执行环境为 $runtimeType。PowerShell 入口用 scripts/remote.ps1；git bash 入口用 scripts/remote.sh。"
